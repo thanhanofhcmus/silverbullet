@@ -28,6 +28,19 @@ pub fn build_main_router(
     dashboard_router: Option<Router>,
     version: String,
 ) -> Router {
+    build_main_router_with_prefix(manager, dashboard_router, version, String::new())
+}
+
+/// Like [`build_main_router`], but mounts the entire server surface (instance
+/// probe, dashboard, and — via the caller — setup and central auth) under
+/// `server_prefix`. Incoming requests carry the prefix; a leading middleware
+/// strips it so routing and handlers remain root-relative.
+pub fn build_main_router_with_prefix(
+    manager: Arc<MultiManager>,
+    dashboard_router: Option<Router>,
+    version: String,
+    server_prefix: String,
+) -> Router {
     // Serve before host/prefix resolution so hostname probes and Docker
     // health checks work regardless of space bindings. Only a per-boot UUID
     // is exposed across origins.
@@ -60,10 +73,42 @@ pub fn build_main_router(
             manager.clone(),
             runtime_origin,
         ))
+        .layer(middleware::from_fn_with_state(
+            server_prefix.clone(),
+            deprefix,
+        ))
         .with_state(MainState {
             manager,
             dashboard_mounted,
         })
+}
+
+/// Strip the configured server prefix from the request path before routing.
+/// This middleware is outermost so every downstream surface (instance,
+/// dashboard, setup, central auth, space dispatch) sees root-relative paths.
+/// A request that does not start with the prefix is left untouched and will
+/// fall through to a 404, matching the behavior of a non-prefixed server.
+async fn deprefix(
+    State(prefix): State<String>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    if !prefix.is_empty() && prefix != "/" {
+        let path = req.uri().path();
+        if let Some(rest) = path.strip_prefix(prefix.as_str()) {
+            if rest.is_empty() || rest.starts_with('/') {
+                let rest = if rest.is_empty() { "/" } else { rest };
+                let new = match req.uri().query() {
+                    Some(q) => format!("{rest}?{q}"),
+                    None => rest.to_string(),
+                };
+                if let Ok(uri) = new.parse::<Uri>() {
+                    *req.uri_mut() = uri;
+                }
+            }
+        }
+    }
+    next.run(req).await
 }
 
 async fn runtime_origin(

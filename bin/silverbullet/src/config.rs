@@ -22,6 +22,10 @@ pub struct Config {
     pub theme_color: String,
     pub space_description: String,
     pub host_url_prefix: String,
+    /// Server-wide URL prefix for multi-space mode (dashboard, setup, central
+    /// auth and the whole HTTP surface). Distinct from `host_url_prefix`,
+    /// which is the legacy single-space prefix and forces single-space mode.
+    pub server_prefix: String,
     pub http_logging: bool,
     pub revisions: RevisionsMode,
 }
@@ -100,6 +104,7 @@ impl Config {
             space_description: env_nonempty("SB_DESCRIPTION")
                 .unwrap_or_else(|| "Powerful and programmable note taking app".to_string()),
             host_url_prefix: normalize_prefix(&env::var("SB_URL_PREFIX").unwrap_or_default()),
+            server_prefix: normalize_prefix(&env::var("SB_SERVER_PREFIX").unwrap_or_default()),
             http_logging: env_nonempty("SB_HTTP_LOGGING").is_some(),
             revisions: match env::var("SB_REVISIONS").as_deref() {
                 Ok("managed") => RevisionsMode::Managed,

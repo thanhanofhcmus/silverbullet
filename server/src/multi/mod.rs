@@ -8,6 +8,7 @@ pub mod config;
 pub mod dashboard;
 pub mod dispatch;
 pub mod git_connection;
+pub mod html_prefix;
 pub mod instance;
 pub mod manager;
 pub mod policy;

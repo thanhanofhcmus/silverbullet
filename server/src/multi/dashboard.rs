@@ -33,6 +33,10 @@ pub struct DashboardState {
     authenticator: Arc<Authenticator>,
     users: Arc<UserStore>,
     client_bundle: Box<dyn SpacePrimitives>,
+    /// Server-wide URL prefix (e.g. `/notes`). Used to rewrite the shell's
+    /// hardcoded `<base href="/.dashboard/">` so the client resolves assets
+    /// and API paths relative to the prefixed mount.
+    server_prefix: String,
 }
 
 impl DashboardState {
@@ -42,6 +46,24 @@ impl DashboardState {
         authenticator: Arc<Authenticator>,
         session: SessionPolicy,
         client_bundle: Box<dyn SpacePrimitives>,
+    ) -> Self {
+        Self::new_with_prefix(
+            manager,
+            users,
+            authenticator,
+            session,
+            client_bundle,
+            String::new(),
+        )
+    }
+
+    pub fn new_with_prefix(
+        manager: Arc<MultiManager>,
+        users: Arc<UserStore>,
+        authenticator: Arc<Authenticator>,
+        session: SessionPolicy,
+        client_bundle: Box<dyn SpacePrimitives>,
+        server_prefix: String,
     ) -> Self {
         // Lockout counts failures across all accounts, including administrators;
         // failed attempts against any account can delay every login.
@@ -70,6 +92,7 @@ impl DashboardState {
             authenticator,
             users,
             client_bundle,
+            server_prefix,
         }
     }
 }
@@ -236,8 +259,16 @@ async fn handle_list(State(state): State<Arc<DashboardState>>, headers: HeaderMa
 
 async fn handle_shell(State(state): State<Arc<DashboardState>>) -> Response {
     let bundle = state.clone();
+    let prefix = state.server_prefix.clone();
     match run_blocking(move || bundle.client_bundle.read_file(".client/dashboard.html")).await {
-        Ok((data, _)) => ([(header::CONTENT_TYPE, "text/html")], data).into_response(),
+        Ok((data, _)) => {
+            let html = crate::multi::html_prefix::rewrite_base_href(
+                &data,
+                "/.dashboard",
+                &prefix,
+            );
+            ([(header::CONTENT_TYPE, "text/html")], html).into_response()
+        }
         Err(_) => (
             StatusCode::NOT_FOUND,
             "Dashboard UI not found in client bundle",

@@ -38,12 +38,20 @@ pub struct SetupState {
     /// always re-checks against a fully-written `users.json` and gets the
     /// intended "already configured" 400.
     pub complete_lock: tokio::sync::Mutex<()>,
+    /// Server-wide URL prefix (e.g. `/notes`). When non-empty, the whole
+    /// `/.setup` surface is nested under it and the shell's `<base href>` is
+    /// rewritten accordingly.
+    pub server_prefix: String,
 }
 
 async fn handle_shell(State(state): State<Arc<SetupState>>) -> Response {
     let s = state.clone();
+    let prefix = state.server_prefix.clone();
     match run_blocking(move || s.client_bundle.read_file(".client/setup.html")).await {
-        Ok((data, _)) => ([(header::CONTENT_TYPE, "text/html")], data).into_response(),
+        Ok((data, _)) => {
+            let html = crate::multi::html_prefix::rewrite_base_href(&data, "/.setup", &prefix);
+            ([(header::CONTENT_TYPE, "text/html")], html).into_response()
+        }
         Err(_) => (StatusCode::NOT_FOUND, "Setup UI not found in client bundle").into_response(),
     }
 }
@@ -133,8 +141,8 @@ async fn handle_fs_dirs(
 
 /// Anything outside `/.setup/...` on an unconfigured server points the browser
 /// at the wizard.
-async fn handle_fallback() -> Response {
-    Redirect::temporary("/.setup/").into_response()
+async fn handle_fallback(State(state): State<Arc<SetupState>>) -> Response {
+    Redirect::temporary(&format!("{}/.setup/", state.server_prefix)).into_response()
 }
 
 pub fn build_setup_router(state: Arc<SetupState>) -> Router {
@@ -162,6 +170,41 @@ pub fn build_setup_router(state: Arc<SetupState>) -> Router {
         .fallback(handle_fallback)
         .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
         .with_state(state)
+}
+
+/// Like [`build_setup_router`], but with the entire surface nested under
+/// `server_prefix` so a prefixed server exposes the wizard at `{prefix}/.setup/`.
+/// The outer `/.instance` probe stays at the origin root (Docker healthchecks
+/// hit it unprefixed).
+pub fn build_setup_router_with_prefix(state: Arc<SetupState>) -> Router {
+    let prefix = state.server_prefix.clone();
+    if prefix.is_empty() || prefix == "/" {
+        return build_setup_router(state);
+    }
+    // Strip the prefix before delegating to the (root-relative) setup router.
+    let inner = build_setup_router(state);
+    let layer_prefix = prefix.clone();
+    Router::new().nest(
+        prefix.as_str(),
+        inner.layer(axum::middleware::from_fn(
+            move |mut req: axum::extract::Request, next: axum::middleware::Next| {
+                let prefix = layer_prefix.clone();
+                async move {
+                    let path = std::mem::take(&mut *req.uri_mut());
+                    let stripped = path.path().strip_prefix(prefix.as_str()).unwrap_or("/");
+                    let stripped = if stripped.is_empty() { "/" } else { stripped };
+                    let new = match path.query() {
+                        Some(q) => format!("{stripped}?{q}"),
+                        None => stripped.to_string(),
+                    };
+                    if let Ok(uri) = new.parse::<axum::http::Uri>() {
+                        *req.uri_mut() = uri;
+                    }
+                    next.run(req).await
+                }
+            },
+        )),
+    )
 }
 
 #[cfg(test)]
@@ -195,6 +238,7 @@ mod tests {
             index_template: "# Hello\n".into(),
             on_complete: Box::new(move || flag.store(true, Ordering::SeqCst)),
             complete_lock: tokio::sync::Mutex::new(()),
+            server_prefix: String::new(),
         })
     }
 

@@ -44,7 +44,7 @@ pub(crate) async fn run_setup_server(
     config: crate::config::Config,
     shutdown: crate::server::Shutdown,
 ) -> Result<(), String> {
-    use silverbullet_server::multi::setup_api::{build_setup_router, SetupState};
+    use silverbullet_server::multi::setup_api::{build_setup_router_with_prefix, SetupState};
 
     use crate::embed::{ClientAssets, EmbeddedSpace};
 
@@ -73,9 +73,10 @@ pub(crate) async fn run_setup_server(
         index_template: crate::DEFAULT_INDEX_MD.to_string(),
         on_complete: Box::new(move || signal.notify_one()),
         complete_lock: tokio::sync::Mutex::new(()),
+        server_prefix: config.server_prefix.clone(),
     });
 
-    let (handle, outer) = SwappableRouter::new(build_setup_router(state));
+    let (handle, outer) = SwappableRouter::new(build_setup_router_with_prefix(state));
 
     // Wait for setup to finish, then hot-swap the multi stack into place. The
     // swapped-in stack's spaces need the same shutdown signal as the wizard's
@@ -103,8 +104,9 @@ pub(crate) async fn run_setup_server(
         .await
         .map_err(|e| format!("failed to listen on {addr}: {e}"))?;
     tracing::info!(
-        "SilverBullet setup wizard running: {}/.setup/",
-        crate::server::startup_url(&config.bind_host, config.port)
+        "SilverBullet setup wizard running: {}{}/.setup/",
+        crate::server::startup_url(&config.bind_host, config.port),
+        config.server_prefix
     );
     axum::serve(listener, outer)
         .with_graceful_shutdown(shutdown.future)

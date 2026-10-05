@@ -210,6 +210,7 @@ mod tests {
             theme_color: "#e1e1e1".into(),
             space_description: "Powerful and programmable note taking app".into(),
             host_url_prefix: String::new(),
+            server_prefix: String::new(),
             http_logging: false,
             revisions: silverbullet_server_common::RevisionsMode::Unmanaged,
         }

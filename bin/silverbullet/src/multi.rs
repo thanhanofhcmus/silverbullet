@@ -11,7 +11,7 @@ use silverbullet_server::metrics::Metrics;
 use silverbullet_server::multi::access::SessionPolicy;
 use silverbullet_server::multi::admin_api::{build_admin_api_router, AdminState};
 use silverbullet_server::multi::dashboard::{build_dashboard_router, DashboardState};
-use silverbullet_server::multi::dispatch::build_main_router;
+use silverbullet_server::multi::dispatch::build_main_router_with_prefix;
 use silverbullet_server::multi::instance::{
     AssetFactories, InstanceAuth, InstanceDeps, RuntimeFactory, RuntimeRequest,
 };
@@ -248,25 +248,28 @@ pub async fn build_multi_stack(
         .with_primary_url(Arc::new(move || primary_manager.primary_url()))
         .with_server_name(Arc::new(move || name_manager.server_name())),
     );
-    let dashboard_state = Arc::new(DashboardState::new(
+    let dashboard_state = Arc::new(DashboardState::new_with_prefix(
         manager.clone(),
         store,
         authenticator,
         session,
         Box::new(EmbeddedSpace::<ClientAssets>::new()),
+        config.server_prefix.clone(),
     ));
-    let router = build_main_router(
+    let router = build_main_router_with_prefix(
         manager,
         Some(build_dashboard_router(
             dashboard_state,
             build_admin_api_router(admin_state),
         )),
         crate::VERSION.to_string(),
+        config.server_prefix.clone(),
     )
     .merge(silverbullet_server::handlers::central_auth::router(central));
     let log = format!(
-        "SilverBullet multi-space server running: {} (Dashboard at /.dashboard)",
-        crate::server::startup_url(&config.bind_host, config.port)
+        "SilverBullet multi-space server running: {} (Dashboard at {}/.dashboard)",
+        crate::server::startup_url(&config.bind_host, config.port),
+        config.server_prefix
     );
     Ok((router, log))
 }
