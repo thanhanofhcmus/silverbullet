@@ -58,6 +58,36 @@ export function serverUrl(path: string): URL {
 }
 
 /**
+ * Combine an origin-rooted primary URL with this server's prefix to get the
+ * origin of the central-auth surface.
+ *
+ * The primary URL configured under Admin → Server is the *bare* origin
+ * (`https://host`): it addresses the space, which the server dispatches at the
+ * root. The admin surfaces, central auth included, live under the server
+ * prefix instead (`https://host/notes/.auth/central/...`), so building the
+ * central origin from the primary URL alone drops the prefix and produces a
+ * callback URL the identity provider has not registered.
+ *
+ * A primary URL that already carries the prefix is left alone, so this stays
+ * correct if the two are ever configured to coincide.
+ */
+export function centralOriginFor(primaryUrl: string): string {
+  const prefix = serverPrefix();
+  let url: URL;
+  try {
+    url = new URL(primaryUrl);
+  } catch {
+    return primaryUrl;
+  }
+  const base = url.origin;
+  const path = url.pathname.replace(/\/+$/, "");
+  if (!prefix || path === prefix || path.startsWith(`${prefix}/`)) {
+    return path ? `${base}${path}` : base;
+  }
+  return `${base}${prefix}${path}`;
+}
+
+/**
  * The server prefix as seen from inside a **space** client.
  *
  * A space is served under its own `host_url_prefix` (e.g. `/notes`), and the

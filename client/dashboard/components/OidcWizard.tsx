@@ -8,7 +8,7 @@ import {
 } from "@silverbulletmd/silverbullet/ui";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { adminApi, formatApiError } from "../api.ts";
-import { serverPrefix } from "../../server_prefix.ts";
+import { centralOriginFor, serverPrefix } from "../../server_prefix.ts";
 
 export type ProviderConfig = {
   providerId?: string;
@@ -68,7 +68,9 @@ export function OidcWizard({
       buttonLabel: "Sign in with Google",
       workspaceDomain: "",
     }),
-    ...(status.primaryUrl ? { centralOrigin: status.primaryUrl } : {}),
+    ...(status.primaryUrl
+      ? { centralOrigin: centralOriginFor(status.primaryUrl) }
+      : {}),
     clientSecret: "",
   }));
   const [revision, setRevision] = useState<number | undefined>(
@@ -284,7 +286,6 @@ export function OidcWizard({
           <label for="oidc-central">Central login URL</label>
           <Input
             id="oidc-central"
-            disabled={!!status.primaryUrl}
             type="url"
             required
             value={config.centralOrigin}
@@ -294,7 +295,7 @@ export function OidcWizard({
           />
           <p class="sb-help-text">
             {status.primaryUrl
-              ? "Uses the primary URL configured under Admin → Server."
+              ? "Derived from the primary URL configured under Admin → Server, plus this server's URL prefix."
               : "Use the public HTTPS origin configured for central login on this server."}
           </p>
           <label for="oidc-issuer">Issuer URL</label>

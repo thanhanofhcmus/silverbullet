@@ -59,6 +59,52 @@ describe("serverPath / serverUrl", () => {
   });
 });
 
+describe("centralOriginFor", () => {
+  test("appends the server prefix to a bare primary URL", async () => {
+    // Regression: the OIDC wizard pre-filled the central login URL from the
+    // primary URL (a bare origin) and then disabled the field, so a prefixed
+    // server produced a callback URL without the prefix — one the identity
+    // provider had not registered.
+    const { centralOriginFor } = await load(
+      "https://host.test/notes/.dashboard/",
+      "https://host.test/notes/.dashboard/",
+    );
+    expect(centralOriginFor("https://host.test")).toBe(
+      "https://host.test/notes",
+    );
+  });
+
+  test("leaves an unprefixed server at the bare origin", async () => {
+    const { centralOriginFor } = await load("https://host.test/.dashboard/");
+    expect(centralOriginFor("https://host.test")).toBe("https://host.test");
+  });
+
+  test("does not double up a prefix the primary URL already carries", async () => {
+    const { centralOriginFor } = await load(
+      "https://host.test/notes/.dashboard/",
+    );
+    expect(centralOriginFor("https://host.test/notes")).toBe(
+      "https://host.test/notes",
+    );
+  });
+
+  test("preserves an unrelated path on the primary URL", async () => {
+    const { centralOriginFor } = await load(
+      "https://host.test/notes/.dashboard/",
+    );
+    expect(centralOriginFor("https://host.test/base")).toBe(
+      "https://host.test/notes/base",
+    );
+  });
+
+  test("returns the input unchanged when it is not a URL", async () => {
+    const { centralOriginFor } = await load(
+      "https://host.test/notes/.dashboard/",
+    );
+    expect(centralOriginFor("not a url")).toBe("not a url");
+  });
+});
+
 describe("spaceServerPrefix", () => {
   test("is the space base path, independent of admin surfaces", async () => {
     const { spaceServerPrefix } = await load("https://host.test/notes/");
