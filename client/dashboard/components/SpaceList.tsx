@@ -6,6 +6,7 @@ import {
   ButtonLink,
 } from "@silverbulletmd/silverbullet/ui";
 import { api, formatApiError } from "../api.ts";
+import { serverPath } from "../../server_prefix.ts";
 import { bindingLabel, spaceEntryUrl } from "../bindings.ts";
 import { dashboardUrl } from "../routes.ts";
 import type { VisibleSpace } from "../types.ts";
@@ -72,7 +73,7 @@ export function SpaceList({
   useEffect(() => {
     const encrypt = !!localStorage.getItem("enableEncryption");
     const central = encrypt
-      ? fetch("/.auth/central/public").then(
+      ? fetch(serverPath("/.auth/central/public")).then(
           async (response) =>
             response.ok && !!(await response.json()).configured,
         )

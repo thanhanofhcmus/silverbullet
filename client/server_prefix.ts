@@ -1,0 +1,77 @@
+/**
+ * Server-wide URL prefix support.
+ *
+ * SilverBullet can be mounted under a URL prefix (e.g. `/notes`) via
+ * `SB_SERVER_PREFIX`. The server rewrites each admin shell's `<base href>` to
+ * include the prefix, so `document.baseURI` already points at the prefixed
+ * surface — e.g. `/notes/.dashboard/` for the dashboard and
+ * `/notes/.auth/central/` for the login page.
+ *
+ * Client code that needs to address a *different* server surface than the one
+ * it is running in (the dashboard reaching central auth, the login page
+ * reaching the dashboard) must therefore include the same prefix. These
+ * helpers derive it once from `document.baseURI`.
+ */
+
+/** The known server surface mounts, longest first so prefixes resolve right. */
+const SURFACES = ["/.auth/central", "/.dashboard", "/.setup"] as const;
+
+/**
+ * The server prefix (e.g. `/notes`), or `""` when the server is mounted at the
+ * origin root. Derived from the current shell's base URI.
+ */
+export function serverPrefix(): string {
+  if (typeof document === "undefined" || !document.baseURI) return "";
+  let pathname: string;
+  try {
+    pathname = new URL(document.baseURI).pathname;
+  } catch {
+    return "";
+  }
+  // Strip a trailing slash, then remove the surface suffix if present.
+  const trimmed = pathname.replace(/\/+$/, "");
+  for (const surface of SURFACES) {
+    if (trimmed.endsWith(surface)) {
+      return trimmed.slice(0, trimmed.length - surface.length);
+    }
+  }
+  // Unknown surface: no detectable prefix.
+  return "";
+}
+
+/**
+ * Build an absolute, origin-rooted path to a server surface, honoring the
+ * server prefix. `path` must start with a known surface, e.g.
+ * `serverPath("/.auth/central/public")` → `/notes/.auth/central/public`.
+ */
+export function serverPath(path: string): string {
+  const prefix = serverPrefix();
+  if (!prefix) return path;
+  return `${prefix}${path}`;
+}
+
+/**
+ * Like {@link serverPath}, but returns a full URL on the request's origin.
+ */
+export function serverUrl(path: string): URL {
+  return new URL(serverPath(path), location.origin);
+}
+
+/**
+ * The server prefix as seen from inside a **space** client.
+ *
+ * A space is served under its own `host_url_prefix` (e.g. `/notes`), and the
+ * server-wide admin surfaces (`/.dashboard`, `/.auth/central`) are mounted
+ * under the same prefix. The space shell's `document.baseURI` is therefore
+ * `{serverPrefix}/`, so the prefix is just the base path with any trailing
+ * slash removed. This is deliberately separate from {@link serverPrefix},
+ * which identifies one of the admin surface mounts.
+ */
+export function spaceServerPrefix(): string {
+  if (typeof document === "undefined" || !document.baseURI) return "";
+  try {
+    return new URL(document.baseURI).pathname.replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}

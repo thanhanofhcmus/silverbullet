@@ -8,6 +8,7 @@ import {
 } from "@silverbulletmd/silverbullet/ui";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { adminApi, formatApiError } from "../api.ts";
+import { serverPrefix } from "../../server_prefix.ts";
 
 export type ProviderConfig = {
   providerId?: string;
@@ -62,7 +63,7 @@ export function OidcWizard({
   const [config, setConfig] = useState<ProviderConfig>(() => ({
     ...(savedConfig ?? {
       issuer: "https://accounts.google.com",
-      centralOrigin: location.origin,
+      centralOrigin: `${location.origin}${serverPrefix()}`,
       clientId: "",
       buttonLabel: "Sign in with Google",
       workspaceDomain: "",

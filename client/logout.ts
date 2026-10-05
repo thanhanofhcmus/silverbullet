@@ -9,8 +9,9 @@ import {
   readLogoutState,
 } from "./logout_state.ts";
 import type { Client } from "./client.ts";
+import { spaceServerPrefix } from "./server_prefix.ts";
 
-export const signedOutUrl = "/.dashboard/login?signedOut=true";
+export const signedOutUrl = `${spaceServerPrefix()}/.dashboard/login?signedOut=true`;
 
 export type LogoutMessage = {
   type:
@@ -161,10 +162,10 @@ let initiatingLogout = false;
 
 function logoutDestination(localLockIncomplete = false): string {
   rememberLogoutForTab();
+  const prefix = spaceServerPrefix();
+  const signedOut = `${prefix}/.auth/central/signed-out`;
   const target =
-    readLogoutState()?.destination === "/.auth/central/signed-out"
-      ? "/.auth/central/signed-out"
-      : signedOutUrl;
+    readLogoutState()?.destination === signedOut ? signedOut : signedOutUrl;
   return (
     target +
     (localLockIncomplete
@@ -386,10 +387,13 @@ export async function logoutBrowserSession(
         );
       }
     }
-    const response = await fetch(route?.endpoint ?? "/.dashboard/api/logout", {
-      ...(route ? { method: route.method } : {}),
-      signal: AbortSignal.timeout(5000),
-    });
+    const response = await fetch(
+      route?.endpoint ?? `${spaceServerPrefix()}/.dashboard/api/logout`,
+      {
+        ...(route ? { method: route.method } : {}),
+        signal: AbortSignal.timeout(5000),
+      },
+    );
     if (!response.ok)
       throw new Error(
         "Could not log out. Your edits remain saved on this device.",

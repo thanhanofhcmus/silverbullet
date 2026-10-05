@@ -4,6 +4,7 @@ import { FieldErrors } from "../../space_fields.tsx";
 import type { Binding, FieldError, RevisionsMode } from "../../types.ts";
 import { defaultFolder, parentDir, type SpaceValues } from "../../wizard.ts";
 import { BindingFields } from "../BindingFields.tsx";
+import { serverPath } from "../../../server_prefix.ts";
 
 export function SpaceStep({
   values,
@@ -71,7 +72,7 @@ export function SpaceStep({
         id="setup-folder"
         value={values.folder}
         onChange={onFolderChange}
-        apiBase="/.setup/api"
+        apiBase={serverPath("/.setup/api")}
         placeholder={defaultFolder(root, values.name)}
         browseStart={parentDir(values.folder) || "/"}
       />

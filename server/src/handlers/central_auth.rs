@@ -137,15 +137,22 @@ impl CentralAuth {
     }
     fn shell(&self) -> Response {
         match self.bundle.read_file(".client/central.html") {
-            Ok((bytes, _)) => (
-                [
-                    ("content-type", "text/html"),
-                    ("cache-control", "no-store"),
-                    ("referrer-policy", "no-referrer"),
-                ],
-                bytes,
-            )
-                .into_response(),
+            Ok((bytes, _)) => {
+                let html = crate::multi::html_prefix::rewrite_base_href(
+                    &bytes,
+                    "/.auth/central",
+                    &self.url_prefix,
+                );
+                (
+                    [
+                        ("content-type", "text/html"),
+                        ("cache-control", "no-store"),
+                        ("referrer-policy", "no-referrer"),
+                    ],
+                    html,
+                )
+                    .into_response()
+            }
             Err(_) => error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Central login assets are unavailable",

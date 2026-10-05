@@ -1,5 +1,7 @@
 export const logoutStateKey = "sb-logout-state";
 
+import { spaceServerPrefix } from "./server_prefix.ts";
+
 type LogoutState = {
   id: string;
   expires: number;
@@ -59,10 +61,12 @@ export async function waitForLogout(): Promise<boolean> {
     waited = true;
     if (state.revoked) {
       rememberLogoutForTab();
+      const prefix = spaceServerPrefix();
+      const signedOut = `${prefix}/.auth/central/signed-out`;
       location.replace(
-        state.destination === "/.auth/central/signed-out"
+        state.destination === signedOut
           ? state.destination
-          : "/.dashboard/login?signedOut=true",
+          : `${prefix}/.dashboard/login?signedOut=true`,
       );
       return false;
     }

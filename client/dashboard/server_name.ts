@@ -1,4 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
+import { serverPath } from "../server_prefix.ts";
 
 const nameChanged = "sb-server-name-changed";
 let currentName = "SilverBullet";
@@ -14,7 +15,9 @@ export function useServerName(): string {
     const changed = () => setName(currentName);
     window.addEventListener(nameChanged, changed);
     const controller = new AbortController();
-    void fetch("/.auth/central/public", { signal: controller.signal })
+    void fetch(serverPath("/.auth/central/public"), {
+      signal: controller.signal,
+    })
       .then(async (response) => {
         if (!response.ok) return;
         const config = await response.json();

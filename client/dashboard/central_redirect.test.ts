@@ -48,3 +48,13 @@ test("does not start a login for an externally supplied destination", async () =
   expect(await redirectToCentral("https://outside.test/")).toBe(false);
   expect(replace).not.toHaveBeenCalled();
 });
+test("includes the server prefix when mounted under one", async () => {
+  const replace = browser(true);
+  // deno-lint-ignore no-explicit-any
+  (globalThis as any).document = {
+    baseURI: "https://notes.test/notes/.dashboard/",
+  };
+  expect(await redirectToCentral("/Project")).toBe(true);
+  const target = new URL(replace.mock.calls[0][0]);
+  expect(target.pathname).toBe("/notes/.auth/central/start");
+});

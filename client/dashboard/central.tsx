@@ -8,8 +8,9 @@ import { Alert, Button } from "@silverbulletmd/silverbullet/ui";
 import { LoginForm, type LoginValues } from "./components/LoginForm.tsx";
 import { CentralUnlock } from "./components/CentralUnlock.tsx";
 import { base64Decode, deriveEncryptionKey } from "./encryption.ts";
+import { serverPath } from "../server_prefix.ts";
 
-const prefix = "/.auth/central";
+const prefix = serverPath("/.auth/central");
 async function request(path: string, body?: unknown) {
   const response = await fetch(
     `${prefix}/${path}`,
@@ -197,7 +198,7 @@ function CentralLogin({ attempt }: { attempt: string }) {
           variant="primary"
           onClick={() => {
             const start = new URL(
-              "/.auth/central/start",
+              serverPath("/.auth/central/start"),
               new URL(context.destination).origin,
             );
             start.searchParams.set("destination", context.destination);
@@ -234,7 +235,7 @@ render(
     <AuthHeader logo="assets/logo-dock-96x96.png" />
     <div class="center">
       <div class="flow floating-island">
-        {location.pathname === "/.auth/central/signed-out" ? (
+        {location.pathname === serverPath("/.auth/central/signed-out") ? (
           <SignedOut
             requireRevocation
             onContinue={() => {

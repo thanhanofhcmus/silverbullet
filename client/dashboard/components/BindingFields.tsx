@@ -11,6 +11,7 @@ import {
   validHostAuthority,
 } from "../binding_fields.ts";
 import type { Binding, VisibleSpace } from "../types.ts";
+import { serverPath } from "../../server_prefix.ts";
 
 export function BindingFields({
   binding,
@@ -66,10 +67,12 @@ export function BindingFields({
       setHostStatus("checking");
       try {
         const own = await (
-          await fetch("/.instance", { signal: AbortSignal.timeout(4000) })
+          await fetch(serverPath("/.instance"), {
+            signal: AbortSignal.timeout(4000),
+          })
         ).json();
         const remote = await (
-          await fetch(`${probeOrigin}/.instance`, {
+          await fetch(new URL(serverPath("/.instance"), probeOrigin), {
             signal: AbortSignal.timeout(4000),
           })
         ).json();
