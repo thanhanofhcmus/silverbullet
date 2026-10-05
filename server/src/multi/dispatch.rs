@@ -88,11 +88,7 @@ pub fn build_main_router_with_prefix(
 /// dashboard, setup, central auth, space dispatch) sees root-relative paths.
 /// A request that does not start with the prefix is left untouched and will
 /// fall through to a 404, matching the behavior of a non-prefixed server.
-async fn deprefix(
-    State(prefix): State<String>,
-    mut req: Request,
-    next: Next,
-) -> Response {
+async fn deprefix(State(prefix): State<String>, mut req: Request, next: Next) -> Response {
     if !prefix.is_empty() && prefix != "/" {
         let path = req.uri().path();
         if let Some(rest) = path.strip_prefix(prefix.as_str()) {

@@ -262,11 +262,7 @@ async fn handle_shell(State(state): State<Arc<DashboardState>>) -> Response {
     let prefix = state.server_prefix.clone();
     match run_blocking(move || bundle.client_bundle.read_file(".client/dashboard.html")).await {
         Ok((data, _)) => {
-            let html = crate::multi::html_prefix::rewrite_base_href(
-                &data,
-                "/.dashboard",
-                &prefix,
-            );
+            let html = crate::multi::html_prefix::rewrite_base_href(&data, "/.dashboard", &prefix);
             ([(header::CONTENT_TYPE, "text/html")], html).into_response()
         }
         Err(_) => (

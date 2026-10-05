@@ -246,6 +246,7 @@ pub async fn build_multi_stack(
             }),
         )?
         .with_primary_url(Arc::new(move || primary_manager.primary_url()))
+        .with_url_prefix(config.server_prefix.clone())
         .with_server_name(Arc::new(move || name_manager.server_name())),
     );
     let dashboard_state = Arc::new(DashboardState::new_with_prefix(

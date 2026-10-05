@@ -24,10 +24,16 @@ impl ProviderConfig {
             }
         }
         let central = validated_url(&self.central_origin)?;
-        if central.path() != "/" {
-            return Err("Central login address must be an origin without a path".into());
-        }
-        self.central_origin = central.origin().ascii_serialization();
+        // The central login address may carry a path prefix (e.g.
+        // `https://host/notes`) so the whole central-auth surface can be served
+        // under a server-wide prefix. Normalize to scheme://host[:port][/prefix]
+        // with no trailing slash.
+        let prefix = central.path().trim_end_matches('/');
+        self.central_origin = if prefix.is_empty() {
+            central.origin().ascii_serialization()
+        } else {
+            format!("{}{prefix}", central.origin().ascii_serialization())
+        };
         validated_url(&self.issuer)?;
         if self.client_id.trim().is_empty() || self.client_secret.is_empty() {
             return Err("Client ID and client secret are required".into());
@@ -80,11 +86,10 @@ mod tests {
         }
     }
     #[test]
-    fn central_address_rejects_userinfo_paths_and_insecure_hosts() {
+    fn central_address_rejects_userinfo_query_and_insecure_hosts() {
         for origin in [
             "http://login.sb.test",
             "https://user@login.sb.test",
-            "https://login.sb.test/path",
             "https://login.sb.test?x=1",
             "https://login.sb.test/#fragment",
         ] {
@@ -92,6 +97,27 @@ mod tests {
             c.central_origin = origin.into();
             assert!(c.validate().is_err(), "{origin}");
         }
+    }
+
+    #[test]
+    fn central_address_accepts_a_path_prefix_and_normalizes_it() {
+        let mut c = config();
+        c.central_origin = "https://host.test/notes/".into();
+        c.validate().unwrap();
+        assert_eq!(c.central_origin, "https://host.test/notes");
+        assert_eq!(
+            c.callback_url(),
+            "https://host.test/notes/.auth/central/oidc/callback"
+        );
+
+        let mut bare = config();
+        bare.central_origin = "https://host.test".into();
+        bare.validate().unwrap();
+        assert_eq!(bare.central_origin, "https://host.test");
+        assert_eq!(
+            bare.callback_url(),
+            "https://host.test/.auth/central/oidc/callback"
+        );
     }
     #[test]
     fn workspace_policy_selects_google_and_normalizes_the_domain() {

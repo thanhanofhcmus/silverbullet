@@ -48,6 +48,9 @@ mod tests {
     #[test]
     fn unchanged_when_no_base_tag() {
         let html = b"<head></head>";
-        assert_eq!(rewrite_base_href(html, "/.dashboard", "/notes"), html.to_vec());
+        assert_eq!(
+            rewrite_base_href(html, "/.dashboard", "/notes"),
+            html.to_vec()
+        );
     }
 }

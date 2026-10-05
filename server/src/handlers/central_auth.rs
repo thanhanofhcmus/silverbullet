@@ -30,6 +30,10 @@ pub struct CentralAuth {
     bundle: Box<dyn SpacePrimitives>,
     destination_policy: DestinationPolicy,
     primary_url: Arc<dyn Fn() -> Option<String> + Send + Sync>,
+    /// Server-wide URL prefix (e.g. `/notes`). When set, the central login
+    /// surface lives at `{primary_url}{url_prefix}` and all generated central
+    /// URLs (login redirects, OIDC callback) carry the prefix.
+    url_prefix: String,
     server_name: Arc<dyn Fn() -> String + Send + Sync>,
 }
 
@@ -60,6 +64,7 @@ impl CentralAuth {
             bundle,
             destination_policy,
             primary_url: Arc::new(|| None),
+            url_prefix: String::new(),
             server_name: Arc::new(crate::multi::server_config::default_server_name),
             attempts: Attempts::default(),
             handoffs: Handoffs::default(),
@@ -80,12 +85,38 @@ impl CentralAuth {
         self
     }
 
+    /// Set the server-wide URL prefix used to mount the central login surface
+    /// (e.g. `/notes`, or empty for the origin root).
+    pub fn with_url_prefix(mut self, url_prefix: String) -> Self {
+        self.url_prefix = url_prefix.trim_end_matches('/').to_string();
+        self
+    }
+
     fn central_origin(&self) -> Option<String> {
-        (self.primary_url)().or_else(|| self.providers.configured().map(|c| c.central_origin))
+        match (self.primary_url)() {
+            // With a primary origin configured, the central surface is the
+            // primary origin plus the server prefix. A configured provider's
+            // `central_origin` is kept in sync with this (see `provider_matches_primary`).
+            Some(primary) => Some(format!(
+                "{}{}",
+                primary.trim_end_matches('/'),
+                self.url_prefix
+            )),
+            None => self.providers.configured().map(|c| c.central_origin),
+        }
     }
 
     fn provider_matches_primary(&self, config: &ProviderConfig) -> bool {
-        (self.primary_url)().is_none_or(|primary| primary == config.central_origin)
+        match (self.primary_url)() {
+            None => true,
+            Some(primary) => {
+                let expected = format!("{}{}", primary.trim_end_matches('/'), self.url_prefix);
+                // Compare exactly, but tolerate a bare primary origin when no
+                // prefix is set (historical behavior).
+                config.central_origin == expected
+                    || (self.url_prefix.is_empty() && config.central_origin == primary)
+            }
+        }
     }
 
     fn active_provider(&self) -> Option<ProviderConfig> {
@@ -266,7 +297,7 @@ async fn draft(
         return error(status, message);
     }
     if let Some(primary) = (state.primary_url)() {
-        config.central_origin = primary;
+        config.central_origin = format!("{}{}", primary.trim_end_matches('/'), state.url_prefix);
     }
     match state.providers.save_draft(config) {
         Ok(revision) => Json(json!({"revision":revision})).into_response(),
@@ -497,6 +528,17 @@ fn origin(headers: &HeaderMap) -> String {
         crate::auth::request_host(headers)
     )
 }
+
+/// Whether a configured central login address (which may carry a server
+/// prefix, e.g. `https://host/notes`) refers to the origin the request
+/// arrived on. Comparison is origin-only: the path prefix is a server
+/// mounting detail, not part of the origin the browser talks to.
+fn central_origin_matches_request(central: &str, headers: &HeaderMap) -> bool {
+    let Ok(url) = reqwest::Url::parse(central) else {
+        return false;
+    };
+    url.origin().ascii_serialization() == origin(headers)
+}
 fn cookie(response: &mut Response, headers: &HeaderMap, name: &str, value: &str, seconds: u64) {
     let options = crate::auth::CookieOptions {
         path: "/".into(),
@@ -620,7 +662,7 @@ async fn login_page(
     } else {
         state.central_origin()
     };
-    if central.is_none_or(|central| central != origin(&headers)) {
+    if central.is_none_or(|central| !central_origin_matches_request(&central, &headers)) {
         return error(
             StatusCode::BAD_REQUEST,
             "Use the configured central login address",
@@ -875,7 +917,7 @@ async fn provider_callback(
             return browser_error(StatusCode::BAD_REQUEST, "Sign-in verification expired");
         }
         let provider = attempt.provider.take().unwrap();
-        if provider.config.central_origin != origin(&headers) {
+        if !central_origin_matches_request(&provider.config.central_origin, &headers) {
             return browser_error(StatusCode::BAD_REQUEST, "Wrong callback hostname");
         }
         (id, provider, attempt.test.clone(), attempt.remember)
