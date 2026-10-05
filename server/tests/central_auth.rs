@@ -146,6 +146,7 @@ async fn local_handoff(primary_without_sso: bool, destination: &str) {
                 client_id: "client".into(),
                 client_secret: "secret".into(),
                 workspace_domain: String::new(),
+                token_auth_method: Default::default(),
                 button_label: "Continue with Pocket ID".into(),
             })
             .unwrap();

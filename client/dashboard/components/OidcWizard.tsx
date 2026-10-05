@@ -18,8 +18,14 @@ export type ProviderConfig = {
   clientSecret?: string;
   workspaceDomain?: string | null;
   buttonLabel: string;
+  tokenAuthMethod?: TokenAuthMethod;
   hasClientSecret?: boolean;
 };
+
+type TokenAuthMethod =
+  | "auto"
+  | "client_secret_post"
+  | "client_secret_basic";
 
 type ProviderMode = "google" | "oidc";
 
@@ -67,6 +73,7 @@ export function OidcWizard({
       clientId: "",
       buttonLabel: "Sign in with Google",
       workspaceDomain: "",
+      tokenAuthMethod: "auto",
     }),
     ...(status.primaryUrl
       ? { centralOrigin: centralOriginFor(status.primaryUrl) }
@@ -319,6 +326,38 @@ export function OidcWizard({
               PKCE and the openid, email, and profile scopes. Register this
               exact callback URL.
             </p>
+          )}
+          {providerMode !== "google" && (
+            <>
+              <label for="oidc-token-auth">Token endpoint authentication</label>
+              <Select
+                id="oidc-token-auth"
+                value={config.tokenAuthMethod ?? "auto"}
+                onChange={(event) =>
+                  edit({
+                    tokenAuthMethod: event.currentTarget
+                      .value as TokenAuthMethod,
+                  })
+                }
+              >
+                <option value="auto">
+                  Automatic (POST, falling back to basic)
+                </option>
+                <option value="client_secret_post">
+                  Client secret in request body
+                </option>
+                <option value="client_secret_basic">
+                  Client secret in basic auth header
+                </option>
+              </Select>
+              <p class="sb-help-text">
+                A provider advertises which methods it supports server-wide,
+                which does not say how this client is registered. Some
+                providers, Authelia included, advertise both while each client
+                pins exactly one — pin it here if automatic selection is
+                rejected.
+              </p>
+            </>
           )}
           <label for="oidc-callback">Callback URL</label>
           <Input id="oidc-callback" readOnly value={callbackUrl} />

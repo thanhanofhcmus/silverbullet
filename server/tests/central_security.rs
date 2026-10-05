@@ -155,6 +155,7 @@ fn config() -> ProviderConfig {
         client_id: "client".into(),
         client_secret: "secret".into(),
         workspace_domain: String::new(),
+        token_auth_method: Default::default(),
         button_label: "Continue".into(),
     }
 }

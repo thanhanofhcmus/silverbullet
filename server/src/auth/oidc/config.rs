@@ -11,7 +11,32 @@ pub struct ProviderConfig {
     pub client_secret: String,
     #[serde(default)]
     pub workspace_domain: String,
+    /// How to authenticate at the token endpoint: `auto` (default),
+    /// `client_secret_post`, or `client_secret_basic`.
+    #[serde(default)]
+    pub token_auth_method: TokenAuthMethod,
     pub button_label: String,
+}
+
+/// Token-endpoint client authentication method.
+///
+/// The provider's discovery document advertises which methods it supports
+/// *server-wide*, which says nothing about how an individual client is
+/// registered. Authelia, for example, advertises both `client_secret_basic`
+/// and `client_secret_post` while each client registration pins exactly one,
+/// so guessing from discovery alone fails whenever the guess disagrees with
+/// the registration. `auto` therefore follows the registration convention that
+/// is the safe default behind reverse proxies, and the other variants let an
+/// operator pin the method explicitly.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenAuthMethod {
+    #[default]
+    Auto,
+    #[serde(rename = "client_secret_post")]
+    ClientSecretPost,
+    #[serde(rename = "client_secret_basic")]
+    ClientSecretBasic,
 }
 
 impl ProviderConfig {
@@ -82,9 +107,45 @@ mod tests {
             client_id: "client".into(),
             client_secret: "secret".into(),
             workspace_domain: String::new(),
+            token_auth_method: TokenAuthMethod::Auto,
             button_label: "Continue with Pocket ID".into(),
         }
     }
+    #[test]
+    fn token_auth_method_defaults_to_auto() {
+        let mut cfg = config();
+        assert_eq!(cfg.token_auth_method, TokenAuthMethod::Auto);
+        cfg.validate().unwrap();
+        assert_eq!(cfg.token_auth_method, TokenAuthMethod::Auto);
+    }
+
+    #[test]
+    fn token_auth_method_round_trips_through_json() {
+        // The dashboard persists this alongside the other provider fields, so
+        // it must survive a serialize/deserialize cycle under its documented
+        // snake_case spelling.
+        let mut cfg = config();
+        cfg.token_auth_method = TokenAuthMethod::ClientSecretPost;
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(json["tokenAuthMethod"], "client_secret_post");
+        let back: ProviderConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(back.token_auth_method, TokenAuthMethod::ClientSecretPost);
+    }
+
+    #[test]
+    fn token_auth_method_is_omitted_safely_when_absent() {
+        // Older saved drafts predate the field; they must load as `auto`.
+        let json = serde_json::json!({
+            "issuer": "https://identity.test",
+            "centralOrigin": "https://login.sb.test",
+            "clientId": "client",
+            "clientSecret": "secret",
+            "buttonLabel": "Continue",
+        });
+        let cfg: ProviderConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg.token_auth_method, TokenAuthMethod::Auto);
+    }
+
     #[test]
     fn central_address_rejects_userinfo_query_and_insecure_hosts() {
         for origin in [

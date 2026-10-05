@@ -15,7 +15,7 @@ use openidconnect::{
 use serde::{Deserialize, Serialize};
 
 use super::{
-    config::{validated_url, ProviderConfig},
+    config::{validated_url, ProviderConfig, TokenAuthMethod},
     identity::VerifiedIdentity,
 };
 
@@ -107,16 +107,36 @@ async fn discover(
     })?;
     validated_url(metadata.authorization_endpoint().as_str())?;
     let methods = metadata.token_endpoint_auth_methods_supported();
-    let auth_type = if methods
-        .is_none_or(|methods| methods.contains(&CoreClientAuthMethod::ClientSecretBasic))
-    {
-        AuthType::BasicAuth
-    } else if methods
-        .is_some_and(|methods| methods.contains(&CoreClientAuthMethod::ClientSecretPost))
-    {
-        AuthType::RequestBody
-    } else {
-        return Err("Provider must support client_secret_basic or client_secret_post".into());
+    let supports =
+        |method: CoreClientAuthMethod| methods.is_none_or(|methods| methods.contains(&method));
+    // Provider discovery is server-wide and cannot identify how *this* client
+    // registration authenticates. Prefer the POST body (the convention for
+    // clients registered against a self-hosted provider, and the one Authelia
+    // uses here), falling back to HTTP basic only when POST is not offered.
+    let auth_type = match config.token_auth_method {
+        TokenAuthMethod::ClientSecretPost => {
+            if !supports(CoreClientAuthMethod::ClientSecretPost) {
+                return Err("Provider does not support client_secret_post".into());
+            }
+            AuthType::RequestBody
+        }
+        TokenAuthMethod::ClientSecretBasic => {
+            if !supports(CoreClientAuthMethod::ClientSecretBasic) {
+                return Err("Provider does not support client_secret_basic".into());
+            }
+            AuthType::BasicAuth
+        }
+        TokenAuthMethod::Auto => {
+            if supports(CoreClientAuthMethod::ClientSecretPost) {
+                AuthType::RequestBody
+            } else if supports(CoreClientAuthMethod::ClientSecretBasic) {
+                AuthType::BasicAuth
+            } else {
+                return Err(
+                    "Provider must support client_secret_basic or client_secret_post".into(),
+                );
+            }
+        }
     };
     Ok(CoreClient::from_provider_metadata(
         metadata,

@@ -1156,6 +1156,7 @@ mod tests {
                 client_id: "silverbullet".into(),
                 client_secret: "test-secret".into(),
                 workspace_domain: String::new(),
+                token_auth_method: crate::auth::oidc::config::TokenAuthMethod::Auto,
                 button_label: "Continue with Example".into(),
             })
             .unwrap();

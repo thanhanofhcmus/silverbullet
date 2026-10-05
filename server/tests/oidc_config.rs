@@ -7,6 +7,7 @@ fn config() -> ProviderConfig {
         client_id: "client".into(),
         client_secret: "private-secret".into(),
         workspace_domain: String::new(),
+        token_auth_method: Default::default(),
         button_label: "Continue with Pocket ID".into(),
     }
 }

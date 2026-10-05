@@ -22,6 +22,12 @@ struct Provider {
     userinfo: Mutex<Value>,
     challenge: Mutex<String>,
     post_auth: bool,
+    /// Advertise *both* basic and post in discovery, as Authelia does, even
+    /// though only `post_auth` is actually accepted. This is the real-world
+    /// configuration that made the old "prefer basic whenever advertised"
+    /// heuristic fail: discovery is server-wide and cannot describe how an
+    /// individual client registration authenticates.
+    advertise_both: std::sync::atomic::AtomicBool,
     token_mode: Mutex<String>,
     bad_signature: std::sync::atomic::AtomicBool,
     oversized_metadata: std::sync::atomic::AtomicBool,
@@ -56,6 +62,7 @@ impl Fixture {
             ),
             challenge: Mutex::new(String::new()),
             post_auth,
+            advertise_both: std::sync::atomic::AtomicBool::new(false),
             token_mode: Mutex::new(String::new()),
             bad_signature: std::sync::atomic::AtomicBool::new(false),
             oversized_metadata: std::sync::atomic::AtomicBool::new(false),
@@ -76,6 +83,7 @@ impl Fixture {
             client_id: "test-client".into(),
             client_secret: "test-secret".into(),
             workspace_domain: String::new(),
+            token_auth_method: Default::default(),
             button_label: "Continue".into(),
         };
         let http = reqwest::Client::builder()
@@ -116,7 +124,11 @@ impl Fixture {
     }
 }
 async fn metadata(State(p): State<Arc<Provider>>) -> Json<Value> {
-    let mut document = json!({"issuer":p.issuer,"authorization_endpoint":format!("{}/authorize",p.issuer),"token_endpoint":format!("{}/token",p.issuer),"jwks_uri":format!("{}/jwks",p.issuer),"userinfo_endpoint":format!("{}/userinfo",p.issuer),"response_types_supported":["code"],"subject_types_supported":["public"],"id_token_signing_alg_values_supported":["RS256"],"token_endpoint_auth_methods_supported":[if p.post_auth {"client_secret_post"} else {"client_secret_basic"}]});
+    let mut document = json!({"issuer":p.issuer,"authorization_endpoint":format!("{}/authorize",p.issuer),"token_endpoint":format!("{}/token",p.issuer),"jwks_uri":format!("{}/jwks",p.issuer),"userinfo_endpoint":format!("{}/userinfo",p.issuer),"response_types_supported":["code"],"subject_types_supported":["public"],"id_token_signing_alg_values_supported":["RS256"],"token_endpoint_auth_methods_supported": if p.advertise_both.load(std::sync::atomic::Ordering::Relaxed) {
+        json!(["client_secret_basic", "client_secret_post"])
+    } else {
+        json!([if p.post_auth {"client_secret_post"} else {"client_secret_basic"}])
+    }});
     if p.oversized_metadata
         .load(std::sync::atomic::Ordering::Relaxed)
     {
@@ -217,6 +229,72 @@ async fn validates_signed_identity_with_basic_and_post_client_authentication() {
         assert_eq!(identity.hosted_domain.as_deref(), Some("example.test"));
     }
 }
+#[tokio::test]
+async fn uses_post_when_discovery_advertises_both_methods() {
+    // Regression: Authelia advertises client_secret_basic and
+    // client_secret_post provider-wide while each client registration pins
+    // exactly one. Preferring basic whenever it was advertised made the token
+    // exchange fail with Authelia's "registered client ... is configured to
+    // only support 'token_endpoint_auth_method' method 'client_secret_post'"
+    // error. The provider here accepts only POST but advertises both, which is
+    // the configuration that used to break.
+    let fixture = Fixture::new(true).await;
+    fixture
+        .provider
+        .advertise_both
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let auth = fixture.authorize().await;
+    let identity = finish(
+        &fixture.config,
+        &fixture.http,
+        "valid-code",
+        &auth.nonce,
+        &auth.verifier,
+    )
+    .await
+    .unwrap();
+    assert_eq!(identity.subject, "subject-river");
+}
+
+#[tokio::test]
+async fn explicit_basic_selection_still_works_when_advertised() {
+    let mut fixture = Fixture::new(false).await;
+    fixture
+        .provider
+        .advertise_both
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    fixture.config.token_auth_method =
+        silverbullet_server::auth::oidc::config::TokenAuthMethod::ClientSecretBasic;
+    let auth = fixture.authorize().await;
+    let identity = finish(
+        &fixture.config,
+        &fixture.http,
+        "valid-code",
+        &auth.nonce,
+        &auth.verifier,
+    )
+    .await
+    .unwrap();
+    assert_eq!(identity.subject, "subject-river");
+}
+
+#[tokio::test]
+async fn rejects_explicit_method_the_provider_does_not_support() {
+    let mut fixture = Fixture::new(true).await;
+    fixture.config.token_auth_method =
+        silverbullet_server::auth::oidc::config::TokenAuthMethod::ClientSecretBasic;
+    // Discovery is where an unsupported explicit method is refused, so the
+    // failure surfaces on `begin` before any code exchange is attempted.
+    let error = match begin(&fixture.config, &fixture.http).await {
+        Ok(_) => panic!("expected discovery to reject an unsupported auth method"),
+        Err(error) => error,
+    };
+    assert!(
+        error.contains("client_secret_basic"),
+        "unexpected error: {error}"
+    );
+}
+
 #[tokio::test]
 async fn rejects_invalid_issuer_audience_expiry_nonce_and_access_token_hash() {
     for (field, value) in [
