@@ -263,10 +263,10 @@ pub async fn build_multi_stack(
             dashboard_state,
             build_admin_api_router(admin_state),
         )),
+        Some(silverbullet_server::handlers::central_auth::router(central)),
         crate::VERSION.to_string(),
         config.server_prefix.clone(),
-    )
-    .merge(silverbullet_server::handlers::central_auth::router(central));
+    );
     let log = format!(
         "SilverBullet multi-space server running: {} (Dashboard at {}/.dashboard)",
         crate::server::startup_url(&config.bind_host, config.port),

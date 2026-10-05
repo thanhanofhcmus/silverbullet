@@ -184,27 +184,48 @@ pub fn build_setup_router_with_prefix(state: Arc<SetupState>) -> Router {
     // Strip the prefix before delegating to the (root-relative) setup router.
     let inner = build_setup_router(state);
     let layer_prefix = prefix.clone();
-    Router::new().nest(
-        prefix.as_str(),
-        inner.layer(axum::middleware::from_fn(
-            move |mut req: axum::extract::Request, next: axum::middleware::Next| {
-                let prefix = layer_prefix.clone();
-                async move {
-                    let path = std::mem::take(&mut *req.uri_mut());
-                    let stripped = path.path().strip_prefix(prefix.as_str()).unwrap_or("/");
-                    let stripped = if stripped.is_empty() { "/" } else { stripped };
-                    let new = match path.query() {
-                        Some(q) => format!("{stripped}?{q}"),
-                        None => stripped.to_string(),
-                    };
-                    if let Ok(uri) = new.parse::<axum::http::Uri>() {
-                        *req.uri_mut() = uri;
+    let nest_prefix = prefix.clone();
+    // Docker healthchecks hit `/.instance` without knowing the prefix.
+    let instance_id = uuid::Uuid::new_v4().to_string();
+    let instance_handler = move || {
+        let body = json!({ "instance": instance_id }).to_string();
+        async move {
+            (
+                [
+                    (header::CONTENT_TYPE, "application/json"),
+                    (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+                ],
+                body,
+            )
+        }
+    };
+    Router::new()
+        .route("/.instance", get(instance_handler))
+        .fallback(move || {
+            let prefix = prefix.clone();
+            async move { Redirect::temporary(&format!("{prefix}/.setup/")).into_response() }
+        })
+        .nest(
+            nest_prefix.as_str(),
+            inner.layer(axum::middleware::from_fn(
+                move |mut req: axum::extract::Request, next: axum::middleware::Next| {
+                    let prefix = layer_prefix.clone();
+                    async move {
+                        let path = std::mem::take(&mut *req.uri_mut());
+                        let stripped = path.path().strip_prefix(prefix.as_str()).unwrap_or("/");
+                        let stripped = if stripped.is_empty() { "/" } else { stripped };
+                        let new = match path.query() {
+                            Some(q) => format!("{stripped}?{q}"),
+                            None => stripped.to_string(),
+                        };
+                        if let Ok(uri) = new.parse::<axum::http::Uri>() {
+                            *req.uri_mut() = uri;
+                        }
+                        next.run(req).await
                     }
-                    next.run(req).await
-                }
-            },
-        )),
-    )
+                },
+            )),
+        )
 }
 
 #[cfg(test)]

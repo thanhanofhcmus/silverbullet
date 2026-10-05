@@ -21,6 +21,9 @@ struct MainState {
     /// Whether `/.dashboard` is mounted. The fallback only needs to know *if* the
     /// surface exists (to redirect `/` there), never to invoke it.
     dashboard_mounted: bool,
+    /// Server-wide URL prefix (e.g. `/notes`). The nested admin fallback uses
+    /// it to restore the full path before handing a request to a space.
+    server_prefix: String,
 }
 
 pub fn build_main_router(
@@ -28,83 +31,109 @@ pub fn build_main_router(
     dashboard_router: Option<Router>,
     version: String,
 ) -> Router {
-    build_main_router_with_prefix(manager, dashboard_router, version, String::new())
+    build_main_router_with_prefix(manager, dashboard_router, None, version, String::new())
 }
 
-/// Like [`build_main_router`], but mounts the entire server surface (instance
-/// probe, dashboard, and — via the caller — setup and central auth) under
-/// `server_prefix`. Incoming requests carry the prefix; a leading middleware
-/// strips it so routing and handlers remain root-relative.
+/// Like [`build_main_router`], but mounts the admin surfaces (instance probe,
+/// dashboard, and the caller-supplied central-auth router) under
+/// `server_prefix`. Space dispatch stays at the origin root so each space
+/// resolves against its own configured prefix (which may itself be the server
+/// prefix).
 pub fn build_main_router_with_prefix(
     manager: Arc<MultiManager>,
     dashboard_router: Option<Router>,
+    extra_router: Option<Router>,
     version: String,
     server_prefix: String,
 ) -> Router {
-    // Serve before host/prefix resolution so hostname probes and Docker
-    // health checks work regardless of space bindings. Only a per-boot UUID
-    // is exposed across origins.
+    // Only a per-boot UUID is exposed across origins; probes work regardless of
+    // space bindings.
     let dashboard_mounted = dashboard_router.is_some();
     let instance_id = uuid::Uuid::new_v4().to_string();
-    let body = serde_json::json!({ "instance": instance_id, "version": version }).to_string();
-    let instance_handler = move || {
-        let body = body.clone();
-        async move {
-            (
-                [
-                    (axum::http::header::CONTENT_TYPE, "application/json"),
-                    (axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
-                ],
-                body,
-            )
+    let unprefixed_id = instance_id.clone();
+    let unprefixed_version = version.clone();
+    let instance_body =
+        serde_json::json!({ "instance": instance_id, "version": version }).to_string();
+    let instance_handler = {
+        let body = instance_body.clone();
+        move || {
+            let body = body.clone();
+            async move {
+                (
+                    [
+                        (axum::http::header::CONTENT_TYPE, "application/json"),
+                        (axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+                    ],
+                    body,
+                )
+            }
         }
     };
-    let mut router = Router::new().route("/.instance", axum::routing::get(instance_handler));
+
+    let state = MainState {
+        manager: manager.clone(),
+        dashboard_mounted,
+        server_prefix: server_prefix.clone(),
+    };
+
+    // Admin surfaces, root-relative; the whole subtree is nested under the
+    // prefix below. The nested subtree falls back to `dispatch_admin`, which
+    // restores the prefix so a space bound at the prefix still resolves.
+    let mut admin = Router::new().route("/.instance", axum::routing::get(instance_handler));
     if let Some(dashboard) = dashboard_router {
-        router = router.nest_service(crate::multi::dashboard::DASHBOARD_PREFIX, dashboard);
+        admin = admin.nest_service(crate::multi::dashboard::DASHBOARD_PREFIX, dashboard);
     }
-    router
-        .fallback(dispatch)
+    let admin = admin
+        .fallback(dispatch_admin)
         .layer(middleware::from_fn_with_state(
             manager.clone(),
             dashboard_origin,
         ))
-        .layer(middleware::from_fn_with_state(
-            manager.clone(),
-            runtime_origin,
-        ))
-        .layer(middleware::from_fn_with_state(
-            server_prefix.clone(),
-            deprefix,
-        ))
-        .with_state(MainState {
-            manager,
-            dashboard_mounted,
-        })
-}
+        .with_state(state.clone());
+    // Central auth carries its own origin guard and state; merge as a sibling.
+    let admin = match extra_router {
+        Some(extra) => admin.merge(extra),
+        None => admin,
+    };
 
-/// Strip the configured server prefix from the request path before routing.
-/// This middleware is outermost so every downstream surface (instance,
-/// dashboard, setup, central auth, space dispatch) sees root-relative paths.
-/// A request that does not start with the prefix is left untouched and will
-/// fall through to a 404, matching the behavior of a non-prefixed server.
-async fn deprefix(State(prefix): State<String>, mut req: Request, next: Next) -> Response {
-    if !prefix.is_empty() && prefix != "/" {
-        let path = req.uri().path();
-        if let Some(rest) = path.strip_prefix(prefix.as_str()) {
-            if rest.is_empty() || rest.starts_with('/') {
-                let rest = if rest.is_empty() { "/" } else { rest };
-                let new = match req.uri().query() {
-                    Some(q) => format!("{rest}?{q}"),
-                    None => rest.to_string(),
-                };
-                if let Ok(uri) = new.parse::<Uri>() {
-                    *req.uri_mut() = uri;
+    // Space dispatch: any path not claimed by an admin surface. Only used when a
+    // server prefix is set; without one, the admin subtree's own fallback
+    // (`dispatch_admin`, which is a no-op prefix-wise) covers every path.
+    let dispatcher = Router::new().fallback(dispatch).with_state(state);
+
+    let router = if server_prefix.is_empty() || server_prefix == "/" {
+        admin
+    } else {
+        // An unprefixed `/.instance` stays at the origin root for container
+        // healthchecks, which never know the configured prefix.
+        let unprefixed_instance = Router::new().route(
+            "/.instance",
+            axum::routing::get(move || {
+                let body = serde_json::json!({
+                    "instance": unprefixed_id.clone(),
+                    "version": unprefixed_version.clone(),
+                })
+                .to_string();
+                async move {
+                    (
+                        [
+                            (axum::http::header::CONTENT_TYPE, "application/json"),
+                            (axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+                        ],
+                        body,
+                    )
                 }
-            }
-        }
-    }
-    next.run(req).await
+            }),
+        );
+        Router::new()
+            .merge(unprefixed_instance)
+            .nest(server_prefix.as_str(), admin)
+            .merge(dispatcher)
+    };
+
+    // The runtime-origin guard runs for *every* request, including admin routes
+    // on runtime hosts, so it is the outermost layer.
+    router.layer(middleware::from_fn_with_state(manager, runtime_origin))
 }
 
 async fn runtime_origin(
@@ -112,6 +141,20 @@ async fn runtime_origin(
     req: Request,
     next: Next,
 ) -> Response {
+    match runtime_guard(&manager, req).await {
+        RuntimeOutcome::Pass(req) => next.run(req).await,
+        RuntimeOutcome::Handled(response) => response,
+    }
+}
+
+enum RuntimeOutcome {
+    Pass(Request),
+    Handled(Response),
+}
+
+/// Shared body of the runtime-origin guard: runtime hosts are resolved to
+/// their space (or rejected) here; ordinary hosts pass through untouched.
+async fn runtime_guard(manager: &MultiManager, req: Request) -> RuntimeOutcome {
     let host = crate::auth::request_host(req.headers());
     let host = host
         .split(':')
@@ -120,10 +163,10 @@ async fn runtime_origin(
         .trim_end_matches('.')
         .to_ascii_lowercase();
     if !host.ends_with(".runtime.localhost") {
-        return next.run(req).await;
+        return RuntimeOutcome::Pass(req);
     }
     let Some(instance) = manager.registry().current().resolve_runtime(&host) else {
-        return StatusCode::NOT_FOUND.into_response();
+        return RuntimeOutcome::Handled(StatusCode::NOT_FOUND.into_response());
     };
     let context = crate::auth::AuthContext {
         method: req.method(),
@@ -143,14 +186,14 @@ async fn runtime_origin(
         || context.path == "/.dashboard"
         || context.path.starts_with("/.dashboard/")
     {
-        return StatusCode::FORBIDDEN.into_response();
+        return RuntimeOutcome::Handled(StatusCode::FORBIDDEN.into_response());
     }
     if let Some(path) = context.path.strip_prefix(&instance.prefix) {
         if path == "/.dashboard" || path.starts_with("/.dashboard/") {
-            return StatusCode::FORBIDDEN.into_response();
+            return RuntimeOutcome::Handled(StatusCode::FORBIDDEN.into_response());
         }
     }
-    forward_to_space(&instance, &instance.prefix, req).await
+    RuntimeOutcome::Handled(forward_to_space(&instance, &instance.prefix, req).await)
 }
 
 fn primary_host_matches(primary: &str, headers: &HeaderMap) -> bool {
@@ -291,6 +334,32 @@ async fn dispatch(State(state): State<MainState>, mut req: Request) -> Response 
     };
 
     forward_to_space(&inst, &prefix, req).await
+}
+
+/// Fallback for the admin subtree when it is nested under the server prefix.
+///
+/// Axum strips the nest prefix before matching, so a request for
+/// `/notes/some/space` reaches here as `/some/space`. Space dispatch must see
+/// the full path to resolve a space whose own prefix is `/notes`, so restore
+/// it before delegating to [`dispatch`]. The outermost `runtime_origin` layer
+/// has already run.
+async fn dispatch_admin(State(state): State<MainState>, mut req: Request) -> Response {
+    if !state.server_prefix.is_empty() && state.server_prefix != "/" {
+        let path = req.uri().path();
+        let restored = if path == "/" {
+            state.server_prefix.clone()
+        } else {
+            format!("{}{}", state.server_prefix, path)
+        };
+        let new = match req.uri().query() {
+            Some(q) => format!("{restored}?{q}"),
+            None => restored,
+        };
+        if let Ok(uri) = new.parse::<Uri>() {
+            *req.uri_mut() = uri;
+        }
+    }
+    dispatch(State(state), req).await
 }
 
 async fn forward_to_space(inst: &SpaceInstance, prefix: &str, req: Request) -> Response {
@@ -463,6 +532,66 @@ mod tests {
             assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT, "{uri}");
             assert_eq!(response.headers()[header::LOCATION], "/.dashboard", "{uri}");
         }
+    }
+
+    /// A prefixed server mounts the admin surfaces under the prefix while a
+    /// space bound at that same prefix still resolves (the regression that a
+    /// naive nest would double-prefix).
+    #[tokio::test]
+    async fn server_prefix_mounts_admin_under_prefix_and_still_dispatches_a_prefixed_space() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = MultiManager::boot(
+            dir.path().to_path_buf(),
+            deps(dir.path()),
+            std::collections::BTreeSet::new(),
+        )
+        .unwrap();
+        m.create(
+            payload(
+                "Notes",
+                Binding::Prefix {
+                    prefix: "/notes".into(),
+                },
+            ),
+            true,
+        )
+        .unwrap();
+        let dashboard = axum::Router::new()
+            .fallback(|| async { (StatusCode::from_u16(299).unwrap(), "dashboard") });
+        let router = build_main_router_with_prefix(
+            m,
+            Some(dashboard),
+            None,
+            "test".to_string(),
+            "/notes".to_string(),
+        );
+
+        // Admin surfaces are reachable under the prefix.
+        assert_eq!(
+            get(&router, "localhost", "/notes/.dashboard")
+                .await
+                .status(),
+            StatusCode::from_u16(299).unwrap()
+        );
+        assert_eq!(
+            get(&router, "localhost", "/notes/.instance").await.status(),
+            StatusCode::OK
+        );
+        // The container healthcheck path stays unprefixed.
+        assert_eq!(
+            get(&router, "localhost", "/.instance").await.status(),
+            StatusCode::OK
+        );
+        // The space bound at `/notes` is dispatched, not swallowed by the nest:
+        // a bare `/notes` redirects to `/notes/` (empty bundle, so the shell
+        // itself 404s — the redirect is what proves dispatch happened).
+        let resp = get(&router, "localhost", "/notes").await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::TEMPORARY_REDIRECT,
+            "expected the prefixed space to be dispatched"
+        );
+        assert_eq!(resp.headers()[header::LOCATION], "/notes/");
     }
 
     #[tokio::test]
