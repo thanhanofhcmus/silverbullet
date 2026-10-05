@@ -36,3 +36,6 @@ AGENTS.md
 # Rust workspace build artifacts (Cargo.lock is intentionally tracked — this
 # workspace produces binaries)
 /target
+
+# Locally built image tarballs for save/load transfer (not for the repo).
+dist-image/
