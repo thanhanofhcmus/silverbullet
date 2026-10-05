@@ -1,0 +1,45 @@
+  # --- SilverBullet (fork: server mounted under a URL prefix) ---------------
+  # Forked image: understands SB_SERVER_PREFIX, which mounts the whole server
+  # (space, /.dashboard, /.auth/central OIDC, /.setup) under the prefix.
+  # Data dir must be owned by uid 1000 so the entrypoint can drop privileges.
+  #
+  # Auth model: SilverBullet is the OIDC *client*. It redirects to the identity
+  # provider itself, so this router must NOT carry forward-auth middleware
+  # (that would double-prompt and break the OIDC callback). The provider only
+  # needs an OIDC client registration (see authelia-client.yaml).
+  #
+  # Replace: <PREFIX>, <PUBLIC_HOST>, <IMAGE_REF>.
+  silverbullet:
+    image: <IMAGE_REF>
+    restart: unless-stopped
+    networks:
+      - public_app
+    environment:
+      # Mount the entire server under the prefix (the fork's addition).
+      - SB_SERVER_PREFIX=<PREFIX>
+      - SB_HOSTNAME=0.0.0.0
+      - SB_PORT=3000
+      - TZ=Etc/UTC
+    volumes:
+      - ./silverbullet/data:/data
+    healthcheck:
+      # Unprefixed on purpose: the fork keeps /.instance at the origin root so
+      # the stock healthcheck works even under a prefix.
+      test: ["CMD", "curl", "--fail", "http://localhost:3000/.instance"]
+      interval: 60s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+
+      # One router for everything under the prefix: the space, the dashboard,
+      # the OIDC central-auth surface, setup and the instance probe. No
+      # StripPrefix: SilverBullet handles the prefix itself.
+      #
+      # Keep the explicit priority so this router wins over any catch-all
+      # router on the same host.
+      - "traefik.http.routers.public-silverbullet.rule=Host(`<PUBLIC_HOST>`) && PathPrefix(`<PREFIX>`)"
+      - "traefik.http.routers.public-silverbullet.entrypoints=web"
+      - "traefik.http.routers.public-silverbullet.priority=100"
+      - "traefik.http.services.public-silverbullet.loadbalancer.server.port=3000"

@@ -1,0 +1,50 @@
+# Add this client to `identity_providers.oidc.clients` in the provider's
+# configuration file, alongside any existing entries.
+#
+# Replace: <PREFIX>, <PUBLIC_HOST>, and the client_secret hash below.
+#
+# The redirect URI includes the prefix because the whole SilverBullet server is
+# mounted under it. The fork builds the callback as
+# `{centralOrigin}/.auth/central/oidc/callback`, and with a central origin of
+# https://<PUBLIC_HOST><PREFIX> that is exactly the URI below.
+#
+# Generate a secret and its hash with the provider's own tooling, e.g.:
+#   authelia crypto hash generate pbkdf2 --variant sha512 --random --random.length 72
+# Only the hash goes in this file; paste the plaintext into the SilverBullet
+# dashboard's OIDC wizard (Authentication screen). Do not commit the plaintext.
+
+      - client_id: 'silverbullet'
+        client_name: 'SilverBullet'
+        client_secret: '$pbkdf2-sha512$<ITERATIONS>$<SALT>$<DIGEST>'
+        public: false
+        redirect_uris:
+          - 'https://<PUBLIC_HOST><PREFIX>/.auth/central/oidc/callback'
+        scopes:
+          - 'openid'
+          - 'profile'
+          - 'email'
+        grant_types:
+          - 'authorization_code'
+          - 'refresh_token'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        response_types:
+          - 'code'
+        response_modes:
+          - 'query'
+          - 'form_post'
+        token_endpoint_auth_method: 'client_secret_post'
+        authorization_policy: 'one_factor'
+
+# In the SilverBullet dashboard (https://<PUBLIC_HOST><PREFIX>/.dashboard),
+# Authentication screen, enter:
+#   Issuer:        https://<IDP_HOST>
+#   Client ID:     silverbullet
+#   Client secret: (the plaintext generated above)
+#   Button label:  (any label, e.g. the provider name)
+# Then "Save", "Test", and "Activate".
+#
+# Before that, set the server primary URL (Dashboard -> Server settings):
+#   Primary URL: https://<PUBLIC_HOST>
+# The fork then derives the OIDC central login URL as
+# https://<PUBLIC_HOST><PREFIX> automatically.

@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1
+#
+# Fork image: builds the server + embedded
+# client bundle from source and ships the SLIM runtime (no Chromium), matching
+# upstream's Alpine layout so `docker-entrypoint.sh` works unchanged.
+#
+# Multi-stage:
+#   1. client : Node, builds client_bundle/{client,base_fs} (rust-embed input)
+#   2. server : Rust (Alpine/musl), builds the static `silverbullet` binary
+#   3. runtime: Alpine, the upstream slim image plus the fresh binary
+#
+# For the headless-Chrome runtime API, build `Dockerfile.runtime-api` on top:
+#   docker build -f Dockerfile.runtime-api --build-arg BASE_IMAGE=<this>:tag .
+
+# ---------- stage 1: client bundle ----------
+FROM node:22-alpine AS client
+RUN apk add --no-cache git
+WORKDIR /src
+COPY package.json package-lock.json ./
+RUN npm install --no-audit --no-fund \
+ && (npm install-scripts approve esbuild @parcel/watcher || true) \
+ && npm rebuild esbuild @parcel/watcher || true
+COPY . .
+RUN npm run build
+
+# ---------- stage 2: server binary (static musl) ----------
+FROM rust:alpine AS server
+RUN apk add --no-cache musl-dev
+WORKDIR /src
+COPY --from=client /src/client_bundle ./client_bundle
+COPY Cargo.toml Cargo.lock ./
+COPY bin ./bin
+COPY server ./server
+COPY server-common ./server-common
+COPY server-merge ./server-merge
+COPY server-runtime-chrome ./server-runtime-chrome
+RUN cargo build --release -p silverbullet --bin silverbullet
+
+# ---------- stage 3: runtime (upstream slim layout) ----------
+FROM alpine:latest
+
+RUN apk add --no-cache git curl bash tini openssh-client
+
+# SB_FOLDER is resolved by the entrypoint to /data (or legacy /space).
+ENV SB_HOSTNAME=0.0.0.0 \
+    SB_PORT=3000
+EXPOSE 3000
+HEALTHCHECK CMD curl --fail "http://localhost:$SB_PORT/.instance" || exit 1
+
+# Remove stock accounts so arbitrary PUID/PGID values cannot collide.
+RUN echo "" > /etc/group && echo "root:x:0:0:root:/root:/bin/sh" > /etc/passwd
+
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+COPY --from=server /src/target/release/silverbullet /silverbullet
+RUN chmod +x /silverbullet /docker-entrypoint.sh
+
+ENTRYPOINT ["/sbin/tini", "--", "/docker-entrypoint.sh"]
