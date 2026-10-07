@@ -2,6 +2,7 @@ import { Alert, Button, Input, Field } from "@silverbulletmd/silverbullet/ui";
 import { useEffect, useState } from "preact/hooks";
 import { adminApi, formatApiError } from "../api.ts";
 import { SaveConfirmation, useNotification } from "../notifications.tsx";
+import { dashboardUrl } from "../routes.ts";
 import { updateServerName } from "../server_name.ts";
 
 export function ServerSettingsView({
@@ -49,7 +50,7 @@ export function ServerSettingsView({
       setPrimaryUrl(value.primaryUrl);
       notify("Server settings saved.");
       if (new URL(value.primaryUrl).origin !== location.origin) {
-        location.href = `${value.primaryUrl}/.dashboard/admin?section=server`;
+        location.href = `${new URL(value.primaryUrl).origin}${dashboardUrl("/admin?section=server")}`;
       }
     } catch (error) {
       handleError(error);

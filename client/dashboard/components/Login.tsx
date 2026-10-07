@@ -3,6 +3,7 @@ import { SignedOut } from "./SignedOut.tsx";
 import { redirectToCentral } from "../central_redirect.ts";
 import { useEffect, useState } from "preact/hooks";
 import { api } from "../api.ts";
+import { dashboardUrl } from "../routes.ts";
 import { LoginForm } from "./LoginForm.tsx";
 
 export function Login({
@@ -23,7 +24,7 @@ export function Login({
   useEffect(() => {
     if (signedOut) return;
     void redirectToCentral(
-      new URLSearchParams(location.search).get("next") || "/.dashboard/",
+      new URLSearchParams(location.search).get("next") || dashboardUrl("/"),
     )
       .then((redirected) => {
         if (!redirected) setChecking(false);

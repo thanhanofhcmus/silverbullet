@@ -5,6 +5,7 @@ import {
   PasswordInput,
 } from "@silverbulletmd/silverbullet/ui";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { isDashboardPath, serverPath, serverUrl } from "../../server_prefix.ts";
 import {
   base64Decode,
   deriveEncryptionKey,
@@ -111,7 +112,9 @@ export function CentralUnlock({ resume }: { resume: string }) {
     const start = async () => {
       try {
         const response = await fetch(
-          `/.auth/central/resume?resume=${encodeURIComponent(resume)}`,
+          serverPath(
+            `/.auth/central/resume?resume=${encodeURIComponent(resume)}`,
+          ),
         );
         if (!response.ok)
           throw new Error(
@@ -120,9 +123,7 @@ export function CentralUnlock({ resume }: { resume: string }) {
         const data: ResumeContext = await response.json();
         const destination = new URL(data.destination, location.origin);
         const scope = new URL(data.scope, location.origin);
-        const dashboard =
-          destination.pathname === "/.dashboard" ||
-          destination.pathname.startsWith("/.dashboard/");
+        const dashboard = isDashboardPath(destination.pathname);
         if (
           destination.origin !== location.origin ||
           scope.origin !== location.origin ||
@@ -242,7 +243,7 @@ export function CentralUnlock({ resume }: { resume: string }) {
     }
   }
 
-  const restart = context && new URL("/.auth/central/start", location.origin);
+  const restart = context && serverUrl("/.auth/central/start");
   if (restart && context) {
     restart.searchParams.set("destination", context.destination);
     restart.searchParams.set("encrypt", "true");

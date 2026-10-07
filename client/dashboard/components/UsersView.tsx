@@ -474,7 +474,8 @@ export function UserDetail({
                     }
                     void run(async () => {
                       await setUserAdmin(username, admin);
-                      if (isSelf && !admin) location.assign("/");
+                      if (isSelf && !admin)
+                        location.assign(dashboardUrl("/login"));
                       else await reload();
                     }, "Account role updated.");
                   }}
@@ -629,7 +630,7 @@ export function UserDetail({
                   if (!confirm(message)) return;
                   void run(async () => {
                     await signOutEverywhere(username);
-                    if (isSelf) location.assign("/");
+                    if (isSelf) location.assign(dashboardUrl("/login"));
                     else await reload();
                   }, "All sessions signed out.");
                 }}
@@ -650,7 +651,7 @@ export function UserDetail({
                     if (!isSelf) notify("User deleted.");
                     // Deleting your own account ends the session, so that one has
                     // to be a real navigation out of the app.
-                    if (isSelf) location.assign("/");
+                    if (isSelf) location.assign(dashboardUrl("/login"));
                     else navigate(dashboardUrl("/users"));
                   });
                 }}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
+import { serverPath } from "../../server_prefix.ts";
 import { api } from "../api.ts";
 import { useSlugDefaults } from "../space_fields.tsx";
 import type { Binding, FieldError, RevisionsMode } from "../types.ts";
@@ -152,7 +153,9 @@ export function Wizard() {
       );
     case "done":
       return (
-        <DoneStep target={`${new URL(primaryUrl.trim()).origin}/.dashboard/`} />
+        <DoneStep
+          target={`${new URL(primaryUrl.trim()).origin}${serverPath("/.dashboard/")}`}
+        />
       );
   }
 }

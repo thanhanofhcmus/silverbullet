@@ -51,6 +51,15 @@ export function serverPath(path: string): string {
 }
 
 /**
+ * Whether an origin-rooted `pathname` addresses this server's dashboard,
+ * i.e. `{prefix}/.dashboard` or anything below it.
+ */
+export function isDashboardPath(pathname: string): boolean {
+  const dashboard = serverPath("/.dashboard");
+  return pathname === dashboard || pathname.startsWith(`${dashboard}/`);
+}
+
+/**
  * Like {@link serverPath}, but returns a full URL on the request's origin.
  */
 export function serverUrl(path: string): URL {

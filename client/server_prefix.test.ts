@@ -59,6 +59,25 @@ describe("serverPath / serverUrl", () => {
   });
 });
 
+describe("isDashboardPath", () => {
+  test("matches the prefixed dashboard on a segment boundary", async () => {
+    const { isDashboardPath } = await load(
+      "https://host.test/notes/.auth/central/",
+    );
+    expect(isDashboardPath("/notes/.dashboard")).toBe(true);
+    expect(isDashboardPath("/notes/.dashboard/users")).toBe(true);
+    expect(isDashboardPath("/.dashboard/")).toBe(false);
+    expect(isDashboardPath("/notes/.dashboard-other")).toBe(false);
+    expect(isDashboardPath("/notes/Page")).toBe(false);
+  });
+
+  test("matches the root dashboard without a prefix", async () => {
+    const { isDashboardPath } = await load("https://host.test/.auth/central/");
+    expect(isDashboardPath("/.dashboard/")).toBe(true);
+    expect(isDashboardPath("/.dashboard-other")).toBe(false);
+  });
+});
+
 describe("centralOriginFor", () => {
   test("appends the server prefix to a bare primary URL", async () => {
     // Regression: the OIDC wizard pre-filled the central login URL from the

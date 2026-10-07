@@ -8,7 +8,7 @@ import { Alert, Button } from "@silverbulletmd/silverbullet/ui";
 import { LoginForm, type LoginValues } from "./components/LoginForm.tsx";
 import { CentralUnlock } from "./components/CentralUnlock.tsx";
 import { base64Decode, deriveEncryptionKey } from "./encryption.ts";
-import { serverPath } from "../server_prefix.ts";
+import { isDashboardPath, serverPath } from "../server_prefix.ts";
 
 const prefix = serverPath("/.auth/central");
 async function request(path: string, body?: unknown) {
@@ -93,9 +93,7 @@ function CentralLogin({ attempt }: { attempt: string }) {
 
   async function signIn(values: LoginValues, provider: boolean) {
     if (!context) return;
-    const dashboard = /^\/\.dashboard(?:\/|$)/.test(
-      new URL(context.destination).pathname,
-    );
+    const dashboard = isDashboardPath(new URL(context.destination).pathname);
     const popup =
       !provider && values.clientEncryption && !dashboard
         ? window.open("about:blank", "_blank", "popup,width=600,height=720")
@@ -219,7 +217,7 @@ function CentralLogin({ attempt }: { attempt: string }) {
       clientEncryption
       initialClientEncryption={context.encrypt}
       clientEncryptionHint={
-        /^\/\.dashboard(?:\/|$)/.test(new URL(context.destination).pathname)
+        isDashboardPath(new URL(context.destination).pathname)
           ? "Encryption is completed when you open a space on this device."
           : "SSO uses a separate passphrase to unlock encrypted data on this device."
       }
