@@ -168,14 +168,29 @@ these bugs lived.**
 
 4. **`c8e98f5`** — the version stamp, §4.
 
-5. **OIDC return URL lost the prefix.** After the provider approved sign-in,
-   the handoff redirected to `{origin}/.auth/central/return` — the
-   destination's bare origin — and 404'd. The session cookie was already set,
-   so reopening the app showed the user signed in, which masked it. Same class:
-   the sign-in error page linked to an unprefixed `/.dashboard/login`, and a
-   `<PREFIX>/.dashboard` destination was not recognized as central management.
-   All three now use the server prefix; tests in `server/tests/central_security.rs`
-   (`Fixture::with_prefix`).
+5. **OIDC return URL lost the prefix (`d10f4db`, `aa56dad`, `b8edbbb`).**
+   After sign-in (local *or* OIDC — both go through `complete()`) the handoff
+   redirected to `{origin}/.auth/central/return`, then `return_to_host`
+   redirected to `/.auth/central/unlock`, both without the prefix → 404. The
+   session cookie was already set, so reopening the app showed the user signed
+   in, which masked it. A follow-up audit fixed the rest of this class: retry
+   page link, `/.dashboard` destination checks (server and `isDashboardPath()`
+   in the client), unlock page `resume`/`start` URLs, the dashboard
+   primary-origin redirect, `/` / `/.spaces` / "No space here" in dispatch,
+   setup's hand-off target, server-settings origin switch, self-demotion /
+   sign-out / deletion, and the login page's default `next`. Prefixed tests:
+   `Fixture::with_prefix` in `server/tests/central_security.rs`,
+   `server_prefix_is_kept_on_generated_dashboard_urls` in `dispatch.rs`.
+
+### Known prefix gaps (not fixed; do not affect a space bound at `<PREFIX>`)
+
+- `client/server_prefix.ts` `spaceServerPrefix()` treats the space's own base
+  path as the server prefix. Correct only when a space is bound exactly at the
+  prefix. Proper fix: have the server send the real prefix to the space shell.
+- Single-space mode (`bin/silverbullet/src/boot.rs`, `single.rs`) ignores
+  `SB_SERVER_PREFIX` silently; it should warn or refuse.
+- `client/service_worker/proxy_router.ts` `alwaysProxy` uses space-relative
+  `/.dashboard` etc. — only matters for a root-bound space plus a prefix.
 
 ### Logout is guarded by design
 
@@ -236,7 +251,8 @@ hostname may resolve to a CDN rather than the host. **Assume the operator
 transfers the file.**
 
 ```bash
-# build on the operator's machine (rust is cached; a few minutes)
+# build on the operator's machine. Cargo registry and target/ live in BuildKit
+# cache mounts, so a server-only change rebuilds in ~70s (cold: ~2 min).
 cd <CLONE>
 docker build -f Dockerfile.fork -t <IMAGE_REF> .
 docker save <IMAGE_REF> | gzip -1 > dist-image/<name>.tar.gz
