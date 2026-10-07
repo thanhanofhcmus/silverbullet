@@ -31,6 +31,12 @@ impl Fixture {
         Self::with_primary(None)
     }
     fn with_primary(primary: Option<String>) -> Self {
+        Self::build(primary, "")
+    }
+    fn with_prefix(prefix: &str) -> Self {
+        Self::build(None, prefix)
+    }
+    fn build(primary: Option<String>, prefix: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let users = UserStore::create_empty(dir.path()).unwrap();
         users
@@ -77,7 +83,8 @@ impl Fixture {
                 Arc::new(|u| (u.host_str() == Some("notes.test")).then(|| "/".into())),
             )
             .unwrap()
-            .with_primary_url(Arc::new(move || primary.clone())),
+            .with_primary_url(Arc::new(move || primary.clone()))
+            .with_url_prefix(prefix.into()),
         ));
         Self {
             _dir: dir,
@@ -212,6 +219,15 @@ async fn handoff_does_not_restore_an_account_revoked_after_login() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     assert!(response.headers().get("set-cookie").is_none());
+}
+#[tokio::test]
+async fn handoff_return_url_carries_the_server_prefix() {
+    let f = Fixture::with_prefix("/notes");
+    let (path, _, _) = f.login_handoff(false).await;
+    assert!(
+        path.starts_with("/notes/.auth/central/return?"),
+        "return URL lost the prefix: {path}"
+    );
 }
 #[tokio::test]
 async fn remembered_session_keeps_its_expiry_on_another_hostname() {
@@ -497,6 +513,51 @@ async fn configuration_api_errors_remain_json() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(response.headers()["content-type"], "application/json");
     assert!(json_body(response).await["error"].is_string());
+}
+
+#[tokio::test]
+async fn prefixed_central_management_destination_is_accepted() {
+    let f = Fixture::with_prefix("/notes");
+    let response = f
+        .app
+        .oneshot(request(
+            "GET",
+            "login.test",
+            "/.auth/central/start?destination=https%3A%2F%2Flogin.test%2Fnotes%2F.dashboard",
+            "",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+}
+#[tokio::test]
+async fn prefixed_retry_page_links_inside_the_prefix() {
+    let f = Fixture::with_prefix("/notes");
+    let response = f
+        .app
+        .oneshot(request(
+            "GET",
+            "notes.test",
+            "/.auth/central/return?attempt=missing&code=expired",
+            "",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let html = String::from_utf8(
+        axum::body::to_bytes(response.into_body(), 32 * 1024)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    // minijinja HTML-escapes `/` in the interpolated prefix; browsers decode it.
+    assert!(
+        html.contains("href=\"&#x2f;notes/.dashboard/login\""),
+        "{html}"
+    );
 }
 
 #[tokio::test]

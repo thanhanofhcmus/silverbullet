@@ -167,8 +167,9 @@ impl CentralAuth {
         {
             return None;
         }
+        let dashboard = format!("{}/.dashboard", self.url_prefix);
         if url.origin() == central.origin()
-            && (url.path() == "/.dashboard" || url.path().starts_with("/.dashboard/"))
+            && (url.path() == dashboard || url.path().starts_with(&format!("{dashboard}/")))
         {
             return Some("/".into());
         }
@@ -225,8 +226,11 @@ impl CentralAuth {
             },
             now(),
         )?;
+        // The return route is served under the server prefix on every host,
+        // so the destination's bare origin is not enough.
         Ok(format!(
-            "{origin}/.auth/central/return?code={code}&attempt={id}"
+            "{origin}{}/.auth/central/return?code={code}&attempt={id}",
+            self.url_prefix
         ))
     }
 
@@ -266,13 +270,21 @@ pub fn error(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({"error":message}))).into_response()
 }
 pub fn browser_error(status: StatusCode, message: &str) -> Response {
+    browser_error_under("", status, message)
+}
+/// [`browser_error`] for a server mounted under `prefix`, so the retry link
+/// stays inside the prefix.
+pub fn browser_error_under(prefix: &str, status: StatusCode, message: &str) -> Response {
     let mut env = minijinja::Environment::new();
     env.set_auto_escape_callback(|_| minijinja::AutoEscape::Html);
-    let template = r#"<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign-in could not be completed</title><style>body{font:1rem/1.5 system-ui,sans-serif;max-width:36rem;margin:12vh auto;padding:0 1.5rem}h1{font-size:1.5rem}</style><main><h1>Sign-in could not be completed</h1><p>{{ message }}</p><p><a href="/.dashboard/login">Try signing in again</a></p></main></html>"#;
+    let template = r#"<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign-in could not be completed</title><style>body{font:1rem/1.5 system-ui,sans-serif;max-width:36rem;margin:12vh auto;padding:0 1.5rem}h1{font-size:1.5rem}</style><main><h1>Sign-in could not be completed</h1><p>{{ message }}</p><p><a href="{{ prefix }}/.dashboard/login">Try signing in again</a></p></main></html>"#;
     let html = env
-        .render_str(template, minijinja::context! { message => message })
+        .render_str(
+            template,
+            minijinja::context! { prefix => prefix, message => message },
+        )
         .unwrap_or_else(|_| {
-            "Sign-in could not be completed. Open /.dashboard/login to try again.".into()
+            format!("Sign-in could not be completed. Open {prefix}/.dashboard/login to try again.")
         });
     (status, Html(html)).into_response()
 }
@@ -914,18 +926,27 @@ async fn provider_callback(
             })
             .map(|(id, _)| id.clone());
         let Some(id) = id else {
-            return browser_error(
+            return browser_error_under(
+                &state.url_prefix,
                 StatusCode::BAD_REQUEST,
                 "Unknown or already completed sign-in",
             );
         };
         let attempt = entries.get_mut(&id).unwrap();
         if !state.central_binding_valid(&id, attempt, &headers) {
-            return browser_error(StatusCode::BAD_REQUEST, "Sign-in verification expired");
+            return browser_error_under(
+                &state.url_prefix,
+                StatusCode::BAD_REQUEST,
+                "Sign-in verification expired",
+            );
         }
         let provider = attempt.provider.take().unwrap();
         if !central_origin_matches_request(&provider.config.central_origin, &headers) {
-            return browser_error(StatusCode::BAD_REQUEST, "Wrong callback hostname");
+            return browser_error_under(
+                &state.url_prefix,
+                StatusCode::BAD_REQUEST,
+                "Wrong callback hostname",
+            );
         }
         (id, provider, attempt.test.clone(), attempt.remember)
     };
@@ -950,7 +971,8 @@ async fn provider_callback(
         .get(&id)
         .is_none_or(|attempt| attempt.expires <= now())
     {
-        return browser_error(
+        return browser_error_under(
+            &state.url_prefix,
             StatusCode::BAD_REQUEST,
             "Sign-in expired. Start again from your space.",
         );
@@ -981,7 +1003,7 @@ async fn provider_callback(
     }
     let identity = match identity {
         Ok(i) => i,
-        Err(e) => return browser_error(StatusCode::UNAUTHORIZED, &e),
+        Err(e) => return browser_error_under(&state.url_prefix, StatusCode::UNAUTHORIZED, &e),
     };
     let issued=state.providers.with_active_config(&provider.config,|| {
         let username=state.users.resolve_or_bind_sso(&provider.config.provider_id,&identity).map_err(|_| "Your account hasn't been added to this server or is disabled. Contact your administrator.".to_string())?;
@@ -990,7 +1012,7 @@ async fn provider_callback(
     });
     let (username, jwt, secs) = match issued {
         Ok(value) => value,
-        Err(error) => return browser_error(StatusCode::FORBIDDEN, &error),
+        Err(error) => return browser_error_under(&state.url_prefix, StatusCode::FORBIDDEN, &error),
     };
     match state.complete(&id, &username, &jwt) {
         Ok(url) => {
@@ -998,7 +1020,7 @@ async fn provider_callback(
             auth_cookie(&mut response, &headers, &jwt, secs);
             response
         }
-        Err(e) => browser_error(StatusCode::BAD_REQUEST, &e),
+        Err(e) => browser_error_under(&state.url_prefix, StatusCode::BAD_REQUEST, &e),
     }
 }
 #[derive(Deserialize)]
@@ -1019,13 +1041,15 @@ async fn return_to_host(
         &crate::auth::oauth::challenge_for(&binding),
         now(),
     ) else {
-        return browser_error(
+        return browser_error_under(
+            &state.url_prefix,
             StatusCode::BAD_REQUEST,
             "Sign-in return expired or belongs to another browser. Open the space to try again.",
         );
     };
     if state.valid_destination(&grant.destination).is_none() {
-        return browser_error(
+        return browser_error_under(
+            &state.url_prefix,
             StatusCode::BAD_REQUEST,
             "Destination is no longer configured",
         );
@@ -1034,7 +1058,11 @@ async fn return_to_host(
         .users
         .session_is_current(&grant.username, grant.credential_version.as_deref())
     {
-        return browser_error(StatusCode::UNAUTHORIZED, "Session expired");
+        return browser_error_under(
+            &state.url_prefix,
+            StatusCode::UNAUTHORIZED,
+            "Session expired",
+        );
     }
     let jwt = match state.authenticator.issue_browser_jwt_for_session(
         &grant.username,
@@ -1043,14 +1071,24 @@ async fn return_to_host(
         u64::MAX,
     ) {
         Ok(v) => v,
-        Err(_) => return browser_error(StatusCode::UNAUTHORIZED, "Session expired"),
+        Err(_) => {
+            return browser_error_under(
+                &state.url_prefix,
+                StatusCode::UNAUTHORIZED,
+                "Session expired",
+            )
+        }
     };
     let resume_id = random_secret();
     {
         let mut resumes = state.attempts.resumes.lock().unwrap();
         resumes.retain(|_, r| r.expires > now());
         if resumes.len() >= 1024 {
-            return browser_error(StatusCode::TOO_MANY_REQUESTS, "Too many sign-in returns");
+            return browser_error_under(
+                &state.url_prefix,
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many sign-in returns",
+            );
         }
         resumes.insert(
             resume_id.clone(),
