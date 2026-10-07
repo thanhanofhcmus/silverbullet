@@ -88,6 +88,35 @@ export function centralOriginFor(primaryUrl: string): string {
 }
 
 /**
+ * Like {@link serverPath}, but works from a **space** shell as well as from an
+ * admin surface.
+ *
+ * {@link serverPrefix} only recognizes the admin surface mounts, so from a
+ * space (whose base URI is just `{prefix}/`) it reports no prefix and
+ * {@link serverPath} silently returns an origin-rooted path. Code that runs in
+ * both contexts — the profile menu and logout flow, which live in the editor —
+ * must instead fall back to {@link spaceServerPrefix}, whose value is the base
+ * path itself. Getting this wrong sends logout to `/.auth/central/logout`
+ * rather than `{prefix}/.auth/central/logout`, which 404s.
+ */
+export function anyServerPath(path: string): string {
+  const prefix = serverOnSurface() ? serverPrefix() : spaceServerPrefix();
+  if (!prefix) return path;
+  return `${prefix}${path}`;
+}
+
+/** Whether the current base URI identified one of the admin surface mounts. */
+function serverOnSurface(): boolean {
+  if (typeof document === "undefined" || !document.baseURI) return false;
+  try {
+    const trimmed = new URL(document.baseURI).pathname.replace(/\/+$/, "");
+    return SURFACES.some((surface) => trimmed.endsWith(surface));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The server prefix as seen from inside a **space** client.
  *
  * A space is served under its own `host_url_prefix` (e.g. `/notes`), and the

@@ -1,4 +1,4 @@
-import { serverPath } from "./server_prefix.ts";
+import { anyServerPath } from "./server_prefix.ts";
 
 export type LogoutRoute = {
   endpoint: string;
@@ -8,7 +8,7 @@ export type LogoutRoute = {
 
 async function primaryUrl(fetchFn: typeof fetch): Promise<string | undefined> {
   try {
-    const response = await fetchFn(serverPath("/.auth/central/public"));
+    const response = await fetchFn(anyServerPath("/.auth/central/public"));
     if (!response.ok) return;
     const { primaryUrl } = await response.json();
     if (typeof primaryUrl !== "string") return;
@@ -22,7 +22,7 @@ export async function dashboardUrl(
   path = "",
   fetchFn: typeof fetch = fetch,
 ): Promise<string> {
-  return `${(await primaryUrl(fetchFn)) ?? ""}${serverPath("/.dashboard")}${path}`;
+  return `${(await primaryUrl(fetchFn)) ?? ""}${anyServerPath("/.dashboard")}${path}`;
 }
 
 export async function dashboardSessionRoutes(
@@ -33,19 +33,19 @@ export async function dashboardSessionRoutes(
 }> {
   return (await primaryUrl(fetchFn))
     ? {
-        profile: serverPath("/.auth/central/profile"),
+        profile: anyServerPath("/.auth/central/profile"),
         logout: {
-          endpoint: serverPath("/.auth/central/logout"),
+          endpoint: anyServerPath("/.auth/central/logout"),
           method: "POST",
-          destination: serverPath("/.auth/central/signed-out"),
+          destination: anyServerPath("/.auth/central/signed-out"),
         },
       }
     : {
-        profile: serverPath("/.dashboard/api/profile"),
+        profile: anyServerPath("/.dashboard/api/profile"),
         logout: {
-          endpoint: serverPath("/.dashboard/api/logout"),
+          endpoint: anyServerPath("/.dashboard/api/logout"),
           method: "GET",
-          destination: serverPath("/.dashboard/login?signedOut=true"),
+          destination: anyServerPath("/.dashboard/login?signedOut=true"),
         },
       };
 }
