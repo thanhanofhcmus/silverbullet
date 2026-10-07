@@ -78,6 +78,37 @@ describe("isDashboardPath", () => {
   });
 });
 
+describe("centralMessageOrigin", () => {
+  test("strips the server prefix to the bare origin", async () => {
+    const { centralMessageOrigin } = await load(
+      "https://host.test/notes/.auth/central/",
+    );
+    expect(centralMessageOrigin("https://host.test/notes")).toBe(
+      "https://host.test",
+    );
+    expect(centralMessageOrigin("https://host.test/notes/")).toBe(
+      "https://host.test",
+    );
+  });
+
+  test("rejects other paths, queries and non-URLs", async () => {
+    const { centralMessageOrigin } = await load(
+      "https://host.test/notes/.auth/central/",
+    );
+    expect(centralMessageOrigin("https://host.test")).toBeNull();
+    expect(centralMessageOrigin("https://host.test/other")).toBeNull();
+    expect(centralMessageOrigin("https://host.test/notes?x=1")).toBeNull();
+    expect(centralMessageOrigin("not a url")).toBeNull();
+  });
+
+  test("accepts a bare origin without a prefix", async () => {
+    const { centralMessageOrigin } = await load(
+      "https://host.test/.auth/central/",
+    );
+    expect(centralMessageOrigin("https://host.test")).toBe("https://host.test");
+  });
+});
+
 describe("centralOriginFor", () => {
   test("appends the server prefix to a bare primary URL", async () => {
     // Regression: the OIDC wizard pre-filled the central login URL from the

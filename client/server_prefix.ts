@@ -60,6 +60,23 @@ export function isDashboardPath(pathname: string): boolean {
 }
 
 /**
+ * The bare origin of the central login address the server reports, or `null`
+ * if it is not this server's central surface. The address carries the server
+ * prefix (`https://host/notes`); window messages compare bare origins.
+ */
+export function centralMessageOrigin(centralOrigin: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(centralOrigin);
+  } catch {
+    return null;
+  }
+  if (url.origin === "null" || url.search || url.hash) return null;
+  if (url.pathname.replace(/\/+$/, "") !== serverPrefix()) return null;
+  return url.origin;
+}
+
+/**
  * Like {@link serverPath}, but returns a full URL on the request's origin.
  */
 export function serverUrl(path: string): URL {

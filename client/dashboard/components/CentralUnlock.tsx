@@ -5,7 +5,12 @@ import {
   PasswordInput,
 } from "@silverbulletmd/silverbullet/ui";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { isDashboardPath, serverPath, serverUrl } from "../../server_prefix.ts";
+import {
+  centralMessageOrigin,
+  isDashboardPath,
+  serverPath,
+  serverUrl,
+} from "../../server_prefix.ts";
 import {
   base64Decode,
   deriveEncryptionKey,
@@ -133,8 +138,10 @@ export function CentralUnlock({ resume }: { resume: string }) {
           throw new Error("Invalid sign-in destination");
         data.destination = destination.href;
         data.scope = scope.href;
-        if (new URL(data.centralOrigin).origin !== data.centralOrigin)
-          throw new Error("Invalid central login origin");
+        // Only used to scope window messages, which compare bare origins.
+        const centralOrigin = centralMessageOrigin(data.centralOrigin);
+        if (!centralOrigin) throw new Error("Invalid central login origin");
+        data.centralOrigin = centralOrigin;
         if (cancelled) return;
         if (dashboard) {
           if (data.encrypt) localStorage.setItem("enableEncryption", "true");
