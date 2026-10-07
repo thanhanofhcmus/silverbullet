@@ -76,14 +76,12 @@ Commits, oldest first:
 | `1eab4aa` | Central login + OIDC served under the prefix |
 | `0e914ef` | Client TS resolves admin/central/auth URLs against the prefix |
 | `9ff32e9` | **Critical:** mount admin surfaces via axum `nest` so prefixed spaces still dispatch |
-| `b682324` | `Dockerfile.fork` + `deploy/` kit (compose snippet, provider client block, README) |
-| `2854aaf` | CI workflow to build/push the image — **since deleted** |
-| `91857ef` | gitignore the locally built image tarballs |
-| `e3f76aa` | Drop the CI image-build workflow (images ship by save/load now) |
-| `a576e5e` | **Fix:** derive the OIDC central login URL under the prefix |
-| `7b4c0bd` | **Fix:** stop preferring `client_secret_basic` over the client's registration |
-| `1b7c2fa` | **Fix:** resolve session routes from a space shell, not just admin surfaces |
-| `4910ada` | **Fix:** carry `version.json` into the server stage |
+| `a25705a` | `Dockerfile.fork` + `deploy/` kit (compose snippet, provider client block, README) |
+| `9d9781b` | gitignore the locally built image tarballs |
+| `8e3ae7a` | **Fix:** derive the OIDC central login URL under the prefix |
+| `dce8b9e` | **Fix:** stop preferring `client_secret_basic` over the client's registration |
+| `8e8387c` | **Fix:** resolve session routes from a space shell, not just admin surfaces |
+| `c8e98f5` | **Fix:** carry `version.json` into the server stage |
 
 Key files (the prefix plumbing is the fork's addition):
 `bin/silverbullet/src/{config,multi,boot,single}.rs`,
@@ -99,39 +97,34 @@ end-to-end README.
 - Server: `cargo test -p silverbullet-server`
 - Client: `npx vitest run`, plus `npx tsc --noEmit`
 
-Both suites were green at `4910ada`.
+Both suites were green at `c8e98f5`.
 
 ---
 
-## 4. OPEN — the version stamp is broken (do this next)
+## 4. Version stamp — resolved, pending deploy
 
-**Symptom:** the client permanently shows *"A new version of SilverBullet
-client is available. A reload or two is required to update."*
+**Symptom (old image):** the client permanently shows *"A new version of
+SilverBullet client is available. A reload or two is required to update."*
 
-**Cause, confirmed:** the running server reports `version:"0.0.0"` from its
-`/.instance` probe. The client compares that to its own compiled-in version
-(`client/client.ts`, `case "server-version"`), so they can never match.
+**Cause:** the running server reported `version:"0.0.0"` from its `/.instance`
+probe. The client compares that to its own compiled-in version
+(`client/client.ts`, `case "server-version"`), so they could never match.
+`bin/silverbullet/build.rs` reads `../../version.json` and fell back to
+`"0.0.0"` because the file was never copied into the server stage.
 
-**Fixed in `4910ada`:** `Dockerfile.fork` stage 2 now copies `version.json`
-from stage 1. `bin/silverbullet/build.rs` reads `../../version.json` and fell
-back to `"0.0.0"` because the file was never copied into that stage.
+**Fixed in `c8e98f5`:** `Dockerfile.fork` stage 2 now copies `version.json`
+from stage 1.
 
-**Not yet fixed (decide before rebuilding):** `git describe` fails in the clone
-because it has **zero tags**, so the version falls back to
-`<semver>-unknown-<timestamp>`, and the timestamp is regenerated on every
-build. Even with `version.json` copied, each redeploy produces a new version
-string, so the banner reappears once per deploy.
+**Tags:** upstream tags have been fetched into the clone, so `git describe`
+yields `<semver>-N-g<sha>` (e.g. `2.11.1-80-gc657251`) instead of the
+`-unknown-` fallback.
 
-Options:
-
-1. `git fetch upstream --tags` (upstream has many tags) → `git describe` yields
-   a stable `<semver>-N-g<sha>`, so the version only changes on a real commit.
-   **Recommended.**
-2. Pin the version in the Dockerfile from a CI/build variable instead of
-   relying on tags.
-
-**Do not** build and ship a new image until this is settled, or the operator
-gets another round of stale-client churn.
+**Timestamp — decided, keep as is:** `build/version.ts` appends a wall-clock
+build timestamp, and Docker builds never carry a prior `version.json`, so
+every image gets a distinct version. Consequence: the banner appears **once
+per deploy** and clears after a reload. That is accepted and intended — it
+guarantees a rebuilt bundle is never silently served under a stale version.
+Don't "fix" it.
 
 ### Related fallout
 
@@ -144,19 +137,20 @@ orphaned `sb_files_*` IndexedDB databases. These block the normal logout path
 
 ## 5. Bugs already fixed — and why they were missed
 
-Four fixes landed after the initial "it works" verification. Each was a real
+Five fixes landed after the initial "it works" verification. Each was a real
 defect that the original verification did not catch. The pattern is worth
 internalising: **the first round of testing exercised the HTTP surface with
-`curl`, which bypassed the client UI where all four bugs lived.**
+`curl`, which bypassed the client UI and the browser redirect chain where
+these bugs lived.**
 
-1. **`a576e5e` — OIDC central login URL lost the prefix.** The wizard
+1. **`8e3ae7a` — OIDC central login URL lost the prefix.** The wizard
    pre-filled "Central login URL" from the primary URL (a *bare* origin) and
    then **disabled the field**, so the derived callback dropped `<PREFIX>` and
    no longer matched the provider's registered redirect URI. Only appeared when
    a primary URL was configured. Fix: `centralOriginFor()` + field left
    editable.
 
-2. **`7b4c0bd` — token endpoint auth method.** Discovery advertises
+2. **`dce8b9e` — token endpoint auth method.** Discovery advertises
    `token_endpoint_auth_methods_supported` **provider-wide**; it says nothing
    about how an individual client is registered. Authelia advertises both
    `client_secret_basic` and `client_secret_post` while a given client pins
@@ -166,13 +160,22 @@ internalising: **the first round of testing exercised the HTTP surface with
    advertised only the method it accepted, which is why tests never caught it —
    it can now advertise both independently.
 
-3. **`1b7c2fa` — logout 404'd from inside a space.** `serverPrefix()` only
+3. **`8e8387c` — logout 404'd from inside a space.** `serverPrefix()` only
    recognizes the admin surface mounts, so from a space shell (base URI
    `<PREFIX>/`) it returned `""` and logout POSTed to the origin-rooted
    `/.auth/central/logout` → 404 → *"Could not log out. Your edits remain saved
    on this device."* Affected force logout too. Fix: `anyServerPath()`.
 
-4. **`4910ada`** — the version stamp, §4.
+4. **`c8e98f5`** — the version stamp, §4.
+
+5. **OIDC return URL lost the prefix.** After the provider approved sign-in,
+   the handoff redirected to `{origin}/.auth/central/return` — the
+   destination's bare origin — and 404'd. The session cookie was already set,
+   so reopening the app showed the user signed in, which masked it. Same class:
+   the sign-in error page linked to an unprefixed `/.dashboard/login`, and a
+   `<PREFIX>/.dashboard` destination was not recognized as central management.
+   All three now use the server prefix; tests in `server/tests/central_security.rs`
+   (`Fixture::with_prefix`).
 
 ### Logout is guarded by design
 
@@ -304,20 +307,20 @@ reintroduces the parse error.
 
 ## 8. Next steps
 
-1. **Resolve the version stamping** (§4) — fetch upstream tags or pin the
-   version. Do this **before** building.
-2. **Rebuild** with `4910ada` + the version decision. Ship via §6.
-3. On the deploy host: `docker load` + `--force-recreate silverbullet`.
-4. **Verify** the `/.instance` probe reports a real version, not `0.0.0`, and
-   that the banner clears.
-5. **Confirm logout works** from inside a space (it should hit
+1. **Build and ship** the current tip via §6. Before shipping, confirm the
+   binary carries a real version (`strings /silverbullet | grep 2.11.1-`),
+   not `0.0.0`.
+2. On the deploy host: `docker load` + `--force-recreate silverbullet`.
+3. **Verify** the `/.instance` probe reports that version and that the banner
+   clears after one reload.
+4. **Confirm logout works** from inside a space (it should hit
    `<PREFIX>/.auth/central/logout`). Recommend clearing site data for
    `<PUBLIC_HOST>` if stale `sb_files_*` databases still block it.
-6. **Re-test OIDC end to end:** Save → Test → Activate in the dashboard, then
+5. **Re-test OIDC end to end:** Save → Test → Activate in the dashboard, then
    confirm sign-in redirects to the provider and returns a code to the callback.
    (Note: Save/Test/Activate uses a `revision` concurrency token — editing any
    field after Test requires a re-Test or Activate is rejected.)
-7. Consider offering these fixes upstream as separate PRs — the prefix support
+6. Consider offering these fixes upstream as separate PRs — the prefix support
    is the substantive one. Note the fork may have upstream's `ci.yml`
    **disabled** in the repo's Actions settings (kept in the tree for
    rebaseability).
@@ -328,9 +331,9 @@ reintroduces the parse error.
 
 Build quirks: the client build may need explicit approval of install scripts
 for `esbuild` / `@parcel/watcher`; the server build may need a particular
-`rustup` toolchain override. `.dockerignore` should keep `.git` (needed for
-version stamping) and exclude `target/`, `node_modules/`, and the local image
-tarball directory.
+`rustup` toolchain override. `.dockerignore` keeps `.git` (needed for version
+stamping) and excludes `target/`, `node_modules/` and `dist-image/` (where the
+saved image tarballs go; also gitignored).
 
 The Git host CLI may be authenticated with scopes that **lack package-write**,
 which is part of why a registry push route was abandoned in favour of
