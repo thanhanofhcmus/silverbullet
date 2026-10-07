@@ -223,10 +223,27 @@ async fn handoff_does_not_restore_an_account_revoked_after_login() {
 #[tokio::test]
 async fn handoff_return_url_carries_the_server_prefix() {
     let f = Fixture::with_prefix("/notes");
-    let (path, _, _) = f.login_handoff(false).await;
+    let (path, cookie, _) = f.login_handoff(false).await;
     assert!(
         path.starts_with("/notes/.auth/central/return?"),
         "return URL lost the prefix: {path}"
+    );
+    // The router under test is already de-prefixed, as dispatch would do.
+    let returned = f
+        .app
+        .oneshot(request(
+            "GET",
+            "notes.test",
+            path.strip_prefix("/notes").unwrap(),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let location = returned.headers()["location"].to_str().unwrap();
+    assert!(
+        location.starts_with("/notes/.auth/central/unlock?resume="),
+        "unlock redirect lost the prefix: {location}"
     );
 }
 #[tokio::test]

@@ -1103,8 +1103,11 @@ async fn return_to_host(
             },
         );
     }
-    let mut response =
-        Redirect::to(&format!("/.auth/central/unlock?resume={resume_id}")).into_response();
+    let mut response = Redirect::to(&format!(
+        "{}/.auth/central/unlock?resume={resume_id}",
+        state.url_prefix
+    ))
+    .into_response();
     let secs = state
         .authenticator
         .verify_browser_jwt(&jwt)

@@ -73,7 +73,11 @@ pub fn build_main_router_with_prefix(
     let state = MainState {
         manager: manager.clone(),
         dashboard_mounted,
-        server_prefix: server_prefix.clone(),
+        server_prefix: if server_prefix == "/" {
+            String::new()
+        } else {
+            server_prefix.clone()
+        },
     };
 
     // Admin surfaces, root-relative; the whole subtree is nested under the
@@ -86,7 +90,7 @@ pub fn build_main_router_with_prefix(
     let admin = admin
         .fallback(dispatch_admin)
         .layer(middleware::from_fn_with_state(
-            manager.clone(),
+            state.clone(),
             dashboard_origin,
         ))
         .with_state(state.clone());
@@ -260,11 +264,8 @@ fn dashboard_ui_path(path: &str) -> bool {
         || (parts.len() == 2 && parts[1] == "git" && uuid::Uuid::parse_str(parts[0]).is_ok())
 }
 
-async fn dashboard_origin(
-    State(manager): State<Arc<MultiManager>>,
-    req: Request,
-    next: Next,
-) -> Response {
+async fn dashboard_origin(State(state): State<MainState>, req: Request, next: Next) -> Response {
+    let manager = &state.manager;
     let path = req.uri().path();
     if path != "/.dashboard" && !path.starts_with("/.dashboard/") {
         return next.run(req).await;
@@ -276,7 +277,14 @@ async fn dashboard_origin(
             || origin.starts_with("https://") != crate::auth::is_secure_request(req.headers())
     }) {
         if req.method() == Method::GET && dashboard_ui_path(path) {
-            Redirect::temporary(&format!("{}{path}", primary.as_deref().unwrap())).into_response()
+            // `path` is relative to the nested admin subtree, and the primary
+            // URL is a bare origin, so the server prefix goes back in between.
+            Redirect::temporary(&format!(
+                "{}{}{path}",
+                primary.as_deref().unwrap(),
+                state.server_prefix
+            ))
+            .into_response()
         } else {
             (StatusCode::FORBIDDEN, "Use the primary server origin").into_response()
         }
@@ -314,21 +322,30 @@ async fn dispatch(State(state): State<MainState>, mut req: Request) -> Response 
     let table = state.manager.registry().current();
     let host = crate::auth::request_host(req.headers());
     let path = req.uri().path().to_string();
-    if path.starts_with("/.spaces") {
-        return Redirect::temporary(crate::multi::dashboard::DASHBOARD_PREFIX).into_response();
+    let dashboard = format!(
+        "{}{}",
+        state.server_prefix,
+        crate::multi::dashboard::DASHBOARD_PREFIX
+    );
+    if path
+        .strip_prefix(state.server_prefix.as_str())
+        .is_some_and(|rest| rest.starts_with("/.spaces"))
+    {
+        return Redirect::temporary(&dashboard).into_response();
     }
     let Some((inst, prefix)) = table.resolve_main(&host, &path) else {
         if path == "/" {
             if state.dashboard_mounted && !table.claims_host(&host) {
-                return Redirect::temporary(crate::multi::dashboard::DASHBOARD_PREFIX)
-                    .into_response();
+                return Redirect::temporary(&dashboard).into_response();
             }
             return (StatusCode::NOT_FOUND, "No space here").into_response();
         }
         return (
             StatusCode::NOT_FOUND,
             [(axum::http::header::CONTENT_TYPE, "text/html")],
-            "<html><body><h1>No space here</h1><p>Manage spaces in the <a href=\"/.dashboard\">Dashboard</a>.</p></body></html>",
+            format!(
+                "<html><body><h1>No space here</h1><p>Manage spaces in the <a href=\"{dashboard}\">Dashboard</a>.</p></body></html>"
+            ),
         )
             .into_response();
     };
@@ -532,6 +549,32 @@ mod tests {
             assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT, "{uri}");
             assert_eq!(response.headers()[header::LOCATION], "/.dashboard", "{uri}");
         }
+    }
+
+    /// Redirects and links the server generates toward the dashboard keep the
+    /// server prefix (the proxy only forwards the prefix).
+    #[tokio::test]
+    async fn server_prefix_is_kept_on_generated_dashboard_urls() {
+        let dir = tempfile::tempdir().unwrap();
+        let m =
+            MultiManager::boot(dir.path().into(), deps(dir.path()), Default::default()).unwrap();
+        m.set_primary_url("https://dashboard.example.test").unwrap();
+        let dashboard = Router::new().fallback(|| async { "dashboard" });
+        let r =
+            build_main_router_with_prefix(m, Some(dashboard), None, "test".into(), "/notes".into());
+        let response = get(&r, "other.example.test", "/notes/.dashboard/users").await;
+        assert_eq!(
+            response.headers()["location"],
+            "https://dashboard.example.test/notes/.dashboard/users"
+        );
+        let response = get(&r, "dashboard.example.test", "/notes/.spaces").await;
+        assert_eq!(response.headers()["location"], "/notes/.dashboard");
+        let response = get(&r, "dashboard.example.test", "/elsewhere").await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("href=\"/notes/.dashboard\""));
     }
 
     /// A prefixed server mounts the admin surfaces under the prefix while a
