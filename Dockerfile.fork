@@ -28,6 +28,12 @@ FROM rust:alpine AS server
 RUN apk add --no-cache musl-dev
 WORKDIR /src
 COPY --from=client /src/client_bundle ./client_bundle
+# `build.rs` reads `../../version.json` (relative to `bin/silverbullet`) to
+# inject SB_VERSION, the value the server reports to clients and the client
+# bundle compares against its own to decide whether to show the "new version"
+# banner. Stage 1 generates it while building the client, so take it from there
+# — without it build.rs falls back to `0.0.0` and the banner never clears.
+COPY --from=client /src/version.json ./version.json
 COPY Cargo.toml Cargo.lock ./
 COPY bin ./bin
 COPY server ./server
